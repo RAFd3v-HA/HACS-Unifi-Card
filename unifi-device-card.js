@@ -1,0 +1,11236 @@
+/* UniFi Device Card 0.8.4-local */
+
+// src/model-registry.js
+function range(start, end) {
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+function normalizeModelKey(value) {
+  return String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function apModel(displayModel, options = {}) {
+  return {
+    kind: "access_point",
+    frontStyle: "ap-disc",
+    rows: [],
+    portCount: 0,
+    displayModel,
+    theme: "white",
+    specialSlots: [],
+    ...options
+  };
+}
+var AP_MODEL_PREFIXES = ["UAP", "UAC", "U6", "U7", "G7", "UAL", "UAPMESH", "E7", "UWB", "UDB", "UBB", "UMBB", "UK", "UAIRWIRE", "BZ2", "U5O"];
+var SWITCH_MODEL_PREFIXES = ["USW", "USL", "USPM", "USXG", "USX", "USF", "US8", "USC8", "US16", "US24", "US48", "USMINI", "FLEXMINI", "USM", "ECS"];
+var GATEWAY_MODEL_PREFIXES = ["UDM", "UCG", "UXG", "UGW", "USG", "UDR", "UDR7", "UDRULT", "UDMPRO", "UDMPROSE", "UX", "UX7", "UDW", "EFG", "UTR"];
+function modelStartsWith(device, prefixes) {
+  const candidates = [device?.model, device?.hw_version].filter(Boolean).map(normalizeModelKey);
+  return prefixes.some((pfx) => candidates.some((candidate) => candidate.startsWith(pfx)));
+}
+function isAccessPointLikeModel(device) {
+  const candidates = [device?.model, device?.hw_version].filter(Boolean).map(normalizeModelKey);
+  return AP_MODEL_PREFIXES.some(
+    (pfx) => candidates.some((candidate) => candidate.startsWith(pfx))
+  );
+}
+function defaultSwitchLayout(portCount) {
+  if (portCount <= 8) {
+    return { kind: "switch", frontStyle: "single-row", rows: [range(1, portCount)], portCount, specialSlots: [] };
+  }
+  if (portCount === 16) {
+    return { kind: "switch", frontStyle: "dual-row", rows: [range(1, 8), range(9, 16)], portCount, specialSlots: [] };
+  }
+  if (portCount === 24) {
+    return { kind: "switch", frontStyle: "eight-grid", rows: [range(1, 8), range(9, 16), range(17, 24)], portCount, specialSlots: [] };
+  }
+  if (portCount === 48) {
+    return { kind: "switch", frontStyle: "quad-row", rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)], portCount, specialSlots: [] };
+  }
+  return { kind: "switch", frontStyle: "single-row", rows: [range(1, portCount)], portCount, specialSlots: [] };
+}
+function applyRj45LayoutHints(layout) {
+  const numberedRj45Count = (layout?.rows || []).flat().filter((port) => Number.isInteger(port)).length;
+  const excludedOddEvenModels = /* @__PURE__ */ new Set(["USPM16", "USPM16P"]);
+  const isExcluded = excludedOddEvenModels.has(layout?.modelKey);
+  const isSwitchOrGateway = layout?.kind === "switch" || layout?.kind === "gateway";
+  return {
+    ...layout,
+    // A model may state the odd/even panel explicitly. Devices with eight or
+    // fewer ports fall below the automatic threshold but can still be built
+    // that way, the UDM Pro being the obvious one.
+    rj45_odd_even: typeof layout?.rj45_odd_even === "boolean" ? layout.rj45_odd_even : isSwitchOrGateway && !isExcluded && numberedRj45Count > 8
+  };
+}
+function applyPortsPerRowOverride(layout, portsPerRow) {
+  if (!portsPerRow || portsPerRow < 1 || layout.kind !== "switch") return layout;
+  const portCount = layout.portCount;
+  const newRows = [];
+  for (let i = 0; i < portCount; i += portsPerRow) {
+    newRows.push(range(i + 1, Math.min(i + portsPerRow, portCount)));
+  }
+  const frontStyleMap = {
+    4: "grid-4",
+    6: "six-grid",
+    7: "ultra-row",
+    8: "eight-grid",
+    12: "quad-row"
+  };
+  return {
+    ...layout,
+    rows: newRows,
+    frontStyle: frontStyleMap[portsPerRow] || `grid-${portsPerRow}`
+  };
+}
+var MODEL_REGISTRY = {
+  // ══════════════════════════════════════════════════════════════════════════
+  // ACCESS POINTS
+  // ══════════════════════════════════════════════════════════════════════════
+  UAP: { ...apModel("UAP"), apLedDefaultColor: "#33d35d" },
+  UAPLR: { ...apModel("UAP-LR"), apLedDefaultColor: "#33d35d" },
+  UAPOUTDOOR5: { ...apModel("UAP-Outdoor5", { frontStyle: "ap-mesh-antenna" }), apLedDefaultColor: "#33d35d" },
+  UAPPRO: apModel("UAP-Pro"),
+  UAPAC: apModel("UAP AC"),
+  UAPACLITE: apModel("UAP AC Lite"),
+  UAPACLR: apModel("UAP AC LR"),
+  UAPACPRO: apModel("UAP AC Pro"),
+  UAPIW: apModel("UniFi AP In-Wall", { frontStyle: "ap-in-wall", supportsIntegratedPorts: true }),
+  UAPACIW: apModel("UAP AC In-Wall", { frontStyle: "ap-in-wall", supportsIntegratedPorts: true }),
+  UAPACIWPRO: apModel("UAP AC In-Wall Pro", { frontStyle: "ap-in-wall", supportsIntegratedPorts: true }),
+  UAPIWHD: apModel("UAP In-Wall HD", { frontStyle: "ap-in-wall", supportsIntegratedPorts: true }),
+  UAPACM: apModel("UAP AC Mesh", { frontStyle: "ap-ac-mesh" }),
+  UAPACMPRO: apModel("UAP AC Mesh Pro", { frontStyle: "ap-outdoor-panel" }),
+  UAPNANOHD: apModel("UAP nanoHD"),
+  UAPHD: apModel("UAP HD"),
+  UAPXG: apModel("UAP XG"),
+  UAPSHD: apModel("UAP SHD"),
+  UAPFLEXHD: apModel("UAP FlexHD", { frontStyle: "ap-mesh-column" }),
+  UAPBEACONHD: apModel("UAP BeaconHD", { frontStyle: "ap-extender" }),
+  U6LITE: apModel("U6 Lite"),
+  U6LR: apModel("U6 LR"),
+  U6PRO: apModel("U6 Pro"),
+  U6PLUS: apModel("U6+"),
+  U6MESH: apModel("U6 Mesh", { frontStyle: "ap-mesh-column" }),
+  U6IW: apModel("U6 In-Wall", { frontStyle: "ap-in-wall", supportsIntegratedPorts: true }),
+  U6ENTERPRISE: apModel("U6 Enterprise"),
+  U6ENTERPRISEIW: apModel("U6 Enterprise In-Wall", { frontStyle: "ap-in-wall", supportsIntegratedPorts: true }),
+  U6EXTENDER: apModel("U6 Extender", { frontStyle: "ap-extender" }),
+  U7PRO: apModel("U7 Pro"),
+  U7PROMAX: apModel("U7 Pro Max"),
+  U7PROWALL: apModel("U7 Pro Wall", { frontStyle: "ap-in-wall" }),
+  U7IW: apModel("UAP AC In-Wall", { frontStyle: "ap-in-wall", supportsIntegratedPorts: true }),
+  U7LR: apModel("UAP AC LR"),
+  U7MSH: apModel("UAP AC Mesh", { frontStyle: "ap-ac-mesh" }),
+  G7LR: apModel("U7 LR"),
+  UAPA6A5: apModel("U7 In-Wall", { frontStyle: "ap-in-wall", supportsIntegratedPorts: true }),
+  U7MESH: apModel("U7 Mesh", { frontStyle: "ap-mesh-column" }),
+  U7LITE: apModel("U7 Lite"),
+  U7OUTDOOR: apModel("U7 Outdoor", { frontStyle: "ap-u7-outdoor" }),
+  UKPW: apModel("U7 Outdoor", { frontStyle: "ap-u7-outdoor" }),
+  U7PROXG: apModel("U7 Pro XG"),
+  U7PROXGS: apModel("U7 Pro XGS"),
+  U7PROXGWALL: apModel("U7 Pro XG Wall", { frontStyle: "ap-in-wall" }),
+  U7PROOUTDOOR: apModel("U7 Pro Outdoor", { frontStyle: "ap-u7-outdoor" }),
+  U6MESHPRO: apModel("U6 Mesh Pro", { frontStyle: "ap-mesh-pro" }),
+  E7: apModel("E7", { frontStyle: "ap-e7", apEdgeGlow: true }),
+  U7ENTERPRISE: apModel("U7 Enterprise", { frontStyle: "ap-e7", apEdgeGlow: true }),
+  E7CAMPUS: apModel("E7 Campus", { frontStyle: "ap-e7", apEdgeGlow: true }),
+  E7AUDIENCE: apModel("E7 Audience", { frontStyle: "ap-e7-audience", apEdgeGlow: true }),
+  UKULTRA: apModel("UK Ultra", { frontStyle: "ap-outdoor-panel" }),
+  UBB: apModel("UBB", { frontStyle: "ap-building-bridge", apEdgeGlow: true }),
+  UBBXG: apModel("UBB XG", { frontStyle: "ap-building-bridge", apEdgeGlow: true }),
+  UMBBE634: apModel("UniFi 5G Backup", { frontStyle: "ap-5g-backup" }),
+  UAIRWIRE: apModel("U-AirWire", { frontStyle: "ap-bridge" }),
+  UDB: apModel("Device Bridge", { frontStyle: "ap-device-bridge", supportsIntegratedPorts: true }),
+  UDBIOT: apModel("Device Bridge IoT", { frontStyle: "ap-device-bridge-iot" }),
+  UDBSWITCH: apModel("Device Bridge Switch", { frontStyle: "ap-bridge" }),
+  UDBPRO: apModel("Device Bridge Pro", { frontStyle: "ap-device-bridge-pro", apEdgeGlow: true }),
+  UDBPROSECTOR: apModel("Device Bridge Pro Sector", { frontStyle: "ap-device-bridge-sector" }),
+  UWBXG: apModel("UWB-XG", { frontStyle: "ap-basestation", apEdgeGlow: true }),
+  // ══════════════════════════════════════════════════════════════════════════
+  // SWITCHES — Generation 1 (US-*)
+  // ══════════════════════════════════════════════════════════════════════════
+  // US 8 12W  — 8× 1G RJ45, PoE-Passthrough 12W (Port 8)
+  USC8: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 8,
+    displayModel: "USC 8",
+    theme: "silver",
+    specialSlots: []
+  },
+  US8: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 8,
+    displayModel: "US 8",
+    theme: "silver",
+    specialSlots: []
+  },
+  // US 8 60W  — 8× 1G RJ45, PoE on ports 5-8
+  US8P60: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 8,
+    displayModel: "US 8",
+    theme: "silver",
+    poePortRange: [5, 8],
+    specialSlots: []
+  },
+  // US 8 150W  — 8× 1G RJ45 PoE (all), 2× 1G SFP
+  US8P150: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 10,
+    displayModel: "US 8 150W",
+    theme: "silver",
+    poePortRange: [1, 8],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 9 },
+      { key: "sfp_2", label: "SFP 2", port: 10 }
+    ]
+  },
+  // US 16 PoE 150W  — 16× 1G RJ45 PoE (all), 2× 1G SFP
+  US16P150: {
+    kind: "switch",
+    frontStyle: "dual-row",
+    rows: [range(1, 8), range(9, 16)],
+    portCount: 18,
+    displayModel: "US 16 PoE 150W",
+    theme: "silver",
+    poePortRange: [1, 16],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 17 },
+      { key: "sfp_2", label: "SFP 2", port: 18 }
+    ]
+  },
+  // US 24 250W  — 24× 1G RJ45 PoE (all), 2× 1G SFP
+  US24P250: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24)],
+    portCount: 26,
+    displayModel: "US-24-250W",
+    theme: "silver",
+    poePortRange: [1, 24],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 25, row: 0 },
+      { key: "sfp_2", label: "SFP 2", port: 26, row: 1 }
+    ]
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // SWITCHES — Generation 2 Standard (USW-*)
+  // ══════════════════════════════════════════════════════════════════════════
+  // USW Flex Mini  — Port 1 Uplink/PoE-in, ports 2-5 LAN
+  USMINI: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(2, 5)],
+    portCount: 5,
+    displayModel: "USW Flex Mini",
+    theme: "white",
+    specialSlots: [{ key: "uplink", label: "Uplink", port: 1 }]
+  },
+  // USW Flex  — Port 1 Uplink/PoE-in, ports 2-5 LAN PoE-out
+  USF5P: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(2, 5)],
+    portCount: 5,
+    displayModel: "USW Flex",
+    theme: "white",
+    poePortRange: [2, 5],
+    specialSlots: [{ key: "uplink", label: "Uplink", port: 1 }]
+  },
+  // USW Flex Mini 2.5G 5  — Port 5 Uplink/PoE-in, ports 1-4 LAN
+  USWFLEX25G5: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 4)],
+    portCount: 5,
+    displayModel: "USW Flex Mini 2.5G",
+    theme: "white",
+    specialSlots: [{ key: "uplink", label: "Uplink", port: 5 }]
+  },
+  // USW Flex 2.5G 8 PoE  — Ports 1-8 2.5G RJ45 PoE-out, port 9 10G RJ45, port 10 SFP+
+  USWFLEX25G8POE: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 10,
+    displayModel: "USW Flex 2.5G 8 PoE",
+    theme: "white",
+    poePortRange: [1, 8],
+    specialSlots: [
+      { key: "uplink", label: "10G RJ45", port: 9, media: "rj45" },
+      { key: "sfp_1", label: "SFP+ 1", port: 10, media: "sfp_plus" }
+    ]
+  },
+  // USW Flex 2.5G 8  — Ports 1-8 2.5G RJ45, port 9 10G RJ45 PoE-in, port 10 10G SFP+
+  USWFLEX25G8: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 10,
+    displayModel: "USW Flex 2.5G 8",
+    theme: "white",
+    specialSlots: [
+      { key: "uplink", label: "10G RJ45 PoE-In", port: 9, media: "rj45" },
+      { key: "sfp_1", label: "SFP+ 10G", port: 10, media: "sfp_plus" }
+    ]
+  },
+  // USW Lite 8 PoE  — 8× 1G RJ45, Ports 1-4 PoE+
+  USL8LP: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 8,
+    displayModel: "USW Lite 8 PoE",
+    theme: "white",
+    poePortRange: [1, 4],
+    specialSlots: []
+  },
+  USL8LPB: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 8,
+    displayModel: "USW Lite 8 PoE",
+    theme: "white",
+    poePortRange: [1, 4],
+    specialSlots: []
+  },
+  // USW Lite 16 PoE  — 16× 1G RJ45, Ports 1-8 PoE+
+  USL16LP: {
+    kind: "switch",
+    frontStyle: "dual-row",
+    rows: [range(1, 8), range(9, 16)],
+    portCount: 16,
+    displayModel: "USW Lite 16 PoE",
+    theme: "white",
+    poePortRange: [1, 8],
+    specialSlots: []
+  },
+  USL16LPB: {
+    kind: "switch",
+    frontStyle: "dual-row",
+    rows: [range(1, 8), range(9, 16)],
+    portCount: 16,
+    displayModel: "USW Lite 16 PoE",
+    theme: "white",
+    poePortRange: [1, 8],
+    specialSlots: []
+  },
+  // USW 16 PoE Gen2  — 16× 1G RJ45, Ports 1-8 PoE+, 2× SFP
+  USL16P: {
+    kind: "switch",
+    frontStyle: "dual-row",
+    rows: [range(1, 8), range(9, 16)],
+    portCount: 18,
+    displayModel: "USW 16 PoE",
+    theme: "silver",
+    poePortRange: [1, 8],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 17 },
+      { key: "sfp_2", label: "SFP 2", port: 18 }
+    ]
+  },
+  // USW 24 Gen2  — 24× 1G RJ45, 2× SFP
+  USL24: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 26,
+    displayModel: "USW 24",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 25 },
+      { key: "sfp_2", label: "SFP 2", port: 26 }
+    ]
+  },
+  // USW 24 PoE Gen2  — 24× 1G RJ45, Ports 1-16 PoE+, 2× SFP
+  USL24P: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 26,
+    displayModel: "USW 24 PoE",
+    theme: "silver",
+    poePortRange: [1, 16],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 25 },
+      { key: "sfp_2", label: "SFP 2", port: 26 }
+    ]
+  },
+  USW24P: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 26,
+    displayModel: "USW 24 PoE",
+    theme: "silver",
+    poePortRange: [1, 16],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 25 },
+      { key: "sfp_2", label: "SFP 2", port: 26 }
+    ]
+  },
+  // USW 48 Gen2  — 48× 1G RJ45, 4× SFP
+  USL48: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "USW 48",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 49 },
+      { key: "sfp_2", label: "SFP 2", port: 50 },
+      { key: "sfp_3", label: "SFP 3", port: 51 },
+      { key: "sfp_4", label: "SFP 4", port: 52 }
+    ]
+  },
+  // USW 48 PoE Gen2  — 48× 1G RJ45, Ports 1-32 PoE+, 4× SFP
+  USL48P: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "USW 48 PoE",
+    theme: "silver",
+    poePortRange: [1, 32],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 49 },
+      { key: "sfp_2", label: "SFP 2", port: 50 },
+      { key: "sfp_3", label: "SFP 3", port: 51 },
+      { key: "sfp_4", label: "SFP 4", port: 52 }
+    ]
+  },
+  USW48P: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "USW 48 PoE",
+    theme: "silver",
+    poePortRange: [1, 32],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP 1", port: 49 },
+      { key: "sfp_2", label: "SFP 2", port: 50 },
+      { key: "sfp_3", label: "SFP 3", port: 51 },
+      { key: "sfp_4", label: "SFP 4", port: 52 }
+    ]
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // SWITCHES — Professional
+  // ══════════════════════════════════════════════════════════════════════════
+  US24PRO: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 26,
+    displayModel: "USW Pro 24 PoE",
+    theme: "silver",
+    poePortRange: [1, 16],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 }
+    ]
+  },
+  US24PRO2: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 26,
+    displayModel: "USW Pro 24",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 }
+    ]
+  },
+  US48PRO: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "USW Pro 48 PoE",
+    theme: "silver",
+    poePortRange: [1, 40],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 49 },
+      { key: "sfp_2", label: "SFP+ 2", port: 50 },
+      { key: "sfp_3", label: "SFP+ 3", port: 51 },
+      { key: "sfp_4", label: "SFP+ 4", port: 52 }
+    ]
+  },
+  US48PRO2: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "USW Pro 48",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 49 },
+      { key: "sfp_2", label: "SFP+ 2", port: 50 },
+      { key: "sfp_3", label: "SFP+ 3", port: 51 },
+      { key: "sfp_4", label: "SFP+ 4", port: 52 }
+    ]
+  },
+  // USW Pro Max 16  — 16× RJ45, 2× SFP+
+  USPM16: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 16)],
+    portCount: 18,
+    displayModel: "USW Pro Max 16",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 17 },
+      { key: "sfp_2", label: "SFP+ 2", port: 18 }
+    ]
+  },
+  // USW Pro Max 16 PoE  — 16× RJ45, 2× SFP+
+  USPM16P: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 16)],
+    portCount: 18,
+    displayModel: "USW Pro Max 16 PoE",
+    theme: "silver",
+    poePortRange: [1, 16],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 17 },
+      { key: "sfp_2", label: "SFP+ 2", port: 18 }
+    ]
+  },
+  // USW Pro Max 24 (PoE / non-PoE)  — 24× RJ45, 2× SFP+
+  USPM24: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 26,
+    displayModel: "USW Pro Max 24",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 }
+    ]
+  },
+  USPM24P: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 26,
+    displayModel: "USW Pro Max 24 PoE",
+    theme: "silver",
+    poePortRange: [1, 24],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 }
+    ]
+  },
+  // USW Pro Max 48 (PoE / non-PoE)  — 48× RJ45, 4× SFP+
+  USPM48: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 16), range(17, 32), range(33, 48)],
+    portCount: 52,
+    displayModel: "USW Pro Max 48",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 49 },
+      { key: "sfp_2", label: "SFP+ 2", port: 50 },
+      { key: "sfp_3", label: "SFP+ 3", port: 51 },
+      { key: "sfp_4", label: "SFP+ 4", port: 52 }
+    ]
+  },
+  USPM48P: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 16), range(17, 32), range(33, 48)],
+    portCount: 52,
+    displayModel: "USW Pro Max 48 PoE",
+    theme: "silver",
+    poePortRange: [1, 48],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 49 },
+      { key: "sfp_2", label: "SFP+ 2", port: 50 },
+      { key: "sfp_3", label: "SFP+ 3", port: 51 },
+      { key: "sfp_4", label: "SFP+ 4", port: 52 }
+    ]
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // SWITCHES — Enterprise
+  // ══════════════════════════════════════════════════════════════════════════
+  US68P: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 10,
+    displayModel: "USW Enterprise 8 PoE",
+    theme: "silver",
+    poePortRange: [1, 8],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 9 },
+      { key: "sfp_2", label: "SFP+ 2", port: 10 }
+    ]
+  },
+  US624P: {
+    kind: "switch",
+    frontStyle: "six-grid",
+    rows: [range(1, 6), range(7, 12), range(13, 18), range(19, 24)],
+    portCount: 26,
+    displayModel: "USW Enterprise 24 PoE",
+    theme: "silver",
+    poePortRange: [1, 24],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 }
+    ]
+  },
+  US648P: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "USW Enterprise 48 PoE",
+    theme: "silver",
+    poePortRange: [1, 48],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 49 },
+      { key: "sfp_2", label: "SFP+ 2", port: 50 },
+      { key: "sfp_3", label: "SFP+ 3", port: 51 },
+      { key: "sfp_4", label: "SFP+ 4", port: 52 }
+    ]
+  },
+  // USW Enterprise XG 24  — 24× RJ45, 2× SFP+
+  USXG24: {
+    kind: "switch",
+    frontStyle: "six-grid",
+    rows: [range(1, 6), range(7, 12), range(13, 18), range(19, 24)],
+    portCount: 26,
+    displayModel: "USW Enterprise XG 24",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 }
+    ]
+  },
+  // US 16 XG  — 12× SFP+, 4× 10G RJ45
+  USXG: {
+    kind: "switch",
+    frontStyle: "six-grid",
+    rows: [range(1, 12)],
+    portCount: 16,
+    displayModel: "US-16-XG",
+    theme: "silver",
+    specialSlots: [
+      { key: "rj45_13", label: "13", port: 13, media: "rj45", row: 0 },
+      { key: "rj45_14", label: "14", port: 14, media: "rj45", row: 0 },
+      { key: "rj45_15", label: "15", port: 15, media: "rj45", row: 1 },
+      { key: "rj45_16", label: "16", port: 16, media: "rj45", row: 1 }
+    ]
+  },
+  // USW Flex XG  — 4× 10G RJ45, 1× 1G RJ45 PoE-in/uplink
+  USWFLEXXG: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 4)],
+    portCount: 5,
+    displayModel: "USW Flex XG",
+    theme: "white",
+    specialSlots: [{ key: "uplink", label: "1G PoE-In", port: 5, media: "rj45" }]
+  },
+  // US XG 6 PoE  — 4× RJ45 PoE, 2× SFP+
+  USXG6POE: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 4)],
+    portCount: 6,
+    displayModel: "US XG 6 PoE",
+    theme: "silver",
+    poePortRange: [1, 4],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 5 },
+      { key: "sfp_2", label: "SFP+ 2", port: 6 }
+    ]
+  },
+  // USW WAN  — WAN/LAN utility switch; keep WAN ports explicit.
+  USWWAN: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 2)],
+    portCount: 4,
+    displayModel: "USW WAN",
+    theme: "silver",
+    specialSlots: [
+      { key: "wan", label: "WAN 1", port: 3 },
+      { key: "wan2", label: "WAN 2", port: 4 }
+    ]
+  },
+  USWWANRJ45: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 4)],
+    portCount: 4,
+    displayModel: "USW WAN RJ45",
+    theme: "silver",
+    specialSlots: []
+  },
+  // USW Mission Critical  — 9× RJ45; ports 1-8 provide PoE, port 9 is uplink.
+  USWMISSIONCRITICAL: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 9)],
+    portCount: 9,
+    displayModel: "USW Mission Critical",
+    theme: "silver",
+    poePortRange: [1, 8],
+    specialSlots: []
+  },
+  // USW Industrial  — 8× RJ45, 2× SFP+
+  USWINDUSTRIAL: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 10,
+    displayModel: "USW Industrial",
+    theme: "silver",
+    poePortRange: [1, 8],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 9 },
+      { key: "sfp_2", label: "SFP+ 2", port: 10 }
+    ]
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // SWITCHES — Aggregation
+  // ══════════════════════════════════════════════════════════════════════════
+  USL8A: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [],
+    portCount: 8,
+    displayModel: "USW Aggregation",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 1 },
+      { key: "sfp_2", label: "SFP+ 2", port: 2 },
+      { key: "sfp_3", label: "SFP+ 3", port: 3 },
+      { key: "sfp_4", label: "SFP+ 4", port: 4 },
+      { key: "sfp_5", label: "SFP+ 5", port: 5 },
+      { key: "sfp_6", label: "SFP+ 6", port: 6 },
+      { key: "sfp_7", label: "SFP+ 7", port: 7 },
+      { key: "sfp_8", label: "SFP+ 8", port: 8 }
+    ]
+  },
+  USAGGPRO: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [],
+    portCount: 32,
+    displayModel: "USW Pro Aggregation",
+    theme: "silver",
+    specialSlots: [
+      ...range(1, 28).map((p) => ({ key: `sfp_${p}`, label: `SFP+ ${p}`, port: p })),
+      { key: "sfp28_1", label: "25G 1", port: 29 },
+      { key: "sfp28_2", label: "25G 2", port: 30 },
+      { key: "sfp28_3", label: "25G 3", port: 31 },
+      { key: "sfp28_4", label: "25G 4", port: 32 }
+    ]
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // SWITCHES — Ultra family
+  // ══════════════════════════════════════════════════════════════════════════
+  // 8 total RJ45; one is PoE++ input / uplink, seven are LAN PoE out
+  USWULTRA: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 7)],
+    portCount: 8,
+    displayModel: "USW Ultra",
+    theme: "white",
+    poePortRange: [1, 7],
+    specialSlots: [{ key: "uplink", label: "Uplink", port: 8, media: "rj45", row: 0 }]
+  },
+  USWULTRA60W: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 7)],
+    portCount: 8,
+    displayModel: "USW Ultra 60W",
+    theme: "white",
+    poePortRange: [1, 7],
+    specialSlots: [{ key: "uplink", label: "Uplink", port: 8, media: "rj45", row: 0 }]
+  },
+  USWULTRA210W: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 7)],
+    portCount: 8,
+    displayModel: "USW Ultra 210W",
+    theme: "white",
+    poePortRange: [1, 7],
+    specialSlots: [{ key: "uplink", label: "Uplink", port: 8, media: "rj45", row: 0 }]
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // SWITCHES — Current high-density / campus families
+  // ══════════════════════════════════════════════════════════════════════════
+  USWPROXG8POE: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 8)],
+    portCount: 10,
+    displayModel: "USW Pro XG 8 PoE",
+    theme: "silver",
+    poePortRange: [1, 8],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 9 },
+      { key: "sfp_2", label: "SFP+ 2", port: 10 }
+    ]
+  },
+  USWPROXG10POE: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [range(1, 10)],
+    portCount: 12,
+    displayModel: "USW Pro XG 10 PoE",
+    theme: "silver",
+    poePortRange: [1, 10],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 11 },
+      { key: "sfp_2", label: "SFP+ 2", port: 12 }
+    ]
+  },
+  USWPROXG24: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 26,
+    displayModel: "USW Pro XG 24",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 }
+    ]
+  },
+  USWPROXG24POE: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 26,
+    displayModel: "USW Pro XG 24 PoE",
+    theme: "silver",
+    poePortRange: [1, 24],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 }
+    ]
+  },
+  USWPROXG48: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "USW Pro XG 48",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 49 },
+      { key: "sfp_2", label: "SFP+ 2", port: 50 },
+      { key: "sfp_3", label: "SFP+ 3", port: 51 },
+      { key: "sfp_4", label: "SFP+ 4", port: 52 }
+    ]
+  },
+  USWPROXG48POE: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "USW Pro XG 48 PoE",
+    theme: "silver",
+    poePortRange: [1, 48],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 49 },
+      { key: "sfp_2", label: "SFP+ 2", port: 50 },
+      { key: "sfp_3", label: "SFP+ 3", port: 51 },
+      { key: "sfp_4", label: "SFP+ 4", port: 52 }
+    ]
+  },
+  USWPROHD24: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 28,
+    displayModel: "USW Pro HD 24",
+    theme: "silver",
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 },
+      { key: "sfp_3", label: "SFP+ 3", port: 27 },
+      { key: "sfp_4", label: "SFP+ 4", port: 28 }
+    ]
+  },
+  USWPROHD24POE: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 28,
+    displayModel: "USW Pro HD 24 PoE",
+    theme: "silver",
+    poePortRange: [1, 24],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 25 },
+      { key: "sfp_2", label: "SFP+ 2", port: 26 },
+      { key: "sfp_3", label: "SFP+ 3", port: 27 },
+      { key: "sfp_4", label: "SFP+ 4", port: 28 }
+    ]
+  },
+  ECS24POE: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 28,
+    displayModel: "ECS 24 PoE",
+    theme: "silver",
+    poePortRange: [1, 24],
+    specialSlots: range(25, 28).map((p, i) => ({ key: `sfp_${i + 1}`, label: `SFP+ ${i + 1}`, port: p }))
+  },
+  ECS24SPOE: {
+    kind: "switch",
+    frontStyle: "eight-grid",
+    rows: [range(1, 8), range(9, 16), range(17, 24)],
+    portCount: 28,
+    displayModel: "ECS 24S PoE",
+    theme: "silver",
+    poePortRange: [1, 24],
+    specialSlots: range(25, 28).map((p, i) => ({ key: `sfp_${i + 1}`, label: `SFP+ ${i + 1}`, port: p }))
+  },
+  ECS48POE: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "ECS 48 PoE",
+    theme: "silver",
+    poePortRange: [1, 48],
+    specialSlots: range(49, 52).map((p, i) => ({ key: `sfp_${i + 1}`, label: `SFP+ ${i + 1}`, port: p }))
+  },
+  ECS48SPOE: {
+    kind: "switch",
+    frontStyle: "quad-row",
+    rows: [range(1, 12), range(13, 24), range(25, 36), range(37, 48)],
+    portCount: 52,
+    displayModel: "ECS 48S PoE",
+    theme: "silver",
+    poePortRange: [1, 48],
+    specialSlots: range(49, 52).map((p, i) => ({ key: `sfp_${i + 1}`, label: `SFP+ ${i + 1}`, port: p }))
+  },
+  ECSAGGREGATION: {
+    kind: "switch",
+    frontStyle: "single-row",
+    rows: [],
+    portCount: 32,
+    displayModel: "ECS Aggregation",
+    theme: "silver",
+    specialSlots: [
+      ...range(1, 28).map((p) => ({ key: `sfp_${p}`, label: `SFP+ ${p}`, port: p })),
+      ...range(29, 32).map((p, i) => ({ key: `sfp28_${i + 1}`, label: `25G ${i + 1}`, port: p }))
+    ]
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // GATEWAYS
+  // ══════════════════════════════════════════════════════════════════════════
+  EFG: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [[1]],
+    portCount: 6,
+    displayModel: "Enterprise Fortress Gateway",
+    theme: "silver",
+    specialSlots: [
+      { key: "wan", label: "2.5G WAN", port: 2, media: "rj45" },
+      { key: "sfp_1", label: "SFP+ 1", port: 3 },
+      { key: "sfp_2", label: "SFP+ 2", port: 4 },
+      { key: "wan2", label: "25G WAN", port: 5, media: "sfp28" },
+      { key: "sfp28_2", label: "25G 2", port: 6, media: "sfp28" }
+    ]
+  },
+  UDMPROMAX: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [range(1, 8)],
+    portCount: 11,
+    displayModel: "UDM Pro Max",
+    theme: "silver",
+    specialSlots: [
+      { key: "wan", label: "WAN", port: 9 },
+      { key: "sfp_1", label: "SFP+ 1", port: 10 },
+      { key: "sfp_2", label: "SFP+ 2", port: 11 }
+    ]
+  },
+  UDMBEAST: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [range(1, 8)],
+    portCount: 11,
+    displayModel: "UDM Beast",
+    theme: "silver",
+    specialSlots: [
+      { key: "wan", label: "WAN", port: 9 },
+      { key: "sfp_1", label: "SFP+ 1", port: 10 },
+      { key: "sfp_2", label: "SFP+ 2", port: 11 }
+    ]
+  },
+  UCGULTRA: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1, 2, 3, 4]],
+    portCount: 5,
+    displayModel: "Cloud Gateway Ultra",
+    theme: "white",
+    specialSlots: [{ key: "wan", label: "WAN", port: 5 }]
+  },
+  UDRULT: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1, 2, 3, 4]],
+    portCount: 5,
+    displayModel: "Cloud Gateway Ultra",
+    theme: "white",
+    specialSlots: [{ key: "wan", label: "WAN", port: 5 }]
+  },
+  UDR7: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1, 2, 3]],
+    portCount: 5,
+    displayModel: "UDM67A (UDR7)",
+    theme: "white",
+    specialSlots: [
+      { key: "wan", label: "WAN", port: 4 },
+      { key: "sfp_1", label: "SFP+ WAN", port: 5 }
+    ]
+  },
+  UDM67A: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [range(1, 8)],
+    portCount: 11,
+    displayModel: "UDM67A (UDM-Pro / UDMPRO)",
+    theme: "silver",
+    specialSlots: [
+      { key: "wan", label: "WAN", port: 9 },
+      { key: "sfp_1", label: "SFP+ 1", port: 10 },
+      { key: "sfp_2", label: "SFP+ 2", port: 11 }
+    ]
+  },
+  UCGMAX: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1, 2, 3, 4]],
+    portCount: 5,
+    displayModel: "Cloud Gateway Max",
+    theme: "white",
+    specialSlots: [{ key: "wan", label: "WAN", port: 5 }]
+  },
+  UCGINDUSTRIAL: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[2, 3, 4]],
+    portCount: 6,
+    displayModel: "Cloud Gateway Industrial",
+    theme: "white",
+    specialSlots: [
+      { key: "wan", label: "2.5G RJ45 WAN", port: 1, media: "rj45" },
+      { key: "wan2", label: "10G RJ45 WAN", port: 5, media: "rj45" },
+      { key: "sfp_1", label: "SFP+ WAN", port: 6, media: "sfp_plus" }
+    ]
+  },
+  UCGFIBER: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1, 2, 3, 4]],
+    portCount: 7,
+    displayModel: "Cloud Gateway Fiber",
+    theme: "white",
+    poePortRange: [4, 4],
+    specialSlots: [
+      { key: "wan", label: "WAN", port: 5 },
+      { key: "sfp_1", label: "SFP+ LAN", port: 6 },
+      { key: "sfp_2", label: "SFP+ WAN", port: 7 }
+    ]
+  },
+  UDM: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1, 2, 3, 4]],
+    portCount: 5,
+    displayModel: "UDM",
+    theme: "white",
+    specialSlots: [{ key: "wan", label: "WAN", port: 5 }]
+  },
+  UDR: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1, 2, 3, 4]],
+    portCount: 5,
+    displayModel: "UDR",
+    theme: "white",
+    specialSlots: [{ key: "wan", label: "WAN", port: 5 }]
+  },
+  UDMPRO: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [range(1, 8)],
+    portCount: 11,
+    displayModel: "UDM Pro",
+    theme: "silver",
+    rj45_odd_even: true,
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ 1", port: 10, row: 0 },
+      { key: "wan", label: "WAN", port: 9, media: "rj45", row: 1 },
+      { key: "sfp_2", label: "SFP+ 2", port: 11, row: 1 }
+    ]
+  },
+  UDMPROSE: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [range(1, 8)],
+    portCount: 11,
+    displayModel: "UDM SE",
+    theme: "silver",
+    specialSlots: [
+      { key: "wan", label: "WAN", port: 9 },
+      { key: "sfp_1", label: "SFP+ 1", port: 10 },
+      { key: "sfp_2", label: "SFP+ 2", port: 11 }
+    ]
+  },
+  UX: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1]],
+    portCount: 2,
+    displayModel: "UniFi Express",
+    theme: "white",
+    supportsIntegratedWifi: true,
+    specialSlots: [{ key: "wan", label: "WAN", port: 2 }]
+  },
+  UX7: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1]],
+    portCount: 2,
+    displayModel: "UniFi Express 7",
+    theme: "white",
+    supportsIntegratedWifi: true,
+    specialSlots: [{ key: "wan", label: "10G RJ45 WAN", port: 2, media: "rj45" }]
+  },
+  UDR5GMAX: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1, 2, 3, 4]],
+    portCount: 5,
+    displayModel: "UDR 5G Max",
+    theme: "white",
+    specialSlots: [{ key: "wan", label: "WAN", port: 5 }]
+  },
+  UDW: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [range(1, 12)],
+    portCount: 15,
+    displayModel: "Dream Wall",
+    theme: "white",
+    supportsIntegratedWifi: true,
+    supportsIntegratedPorts: true,
+    supportsHybridLayouts: true,
+    preserveDeclaredRows: true,
+    apFrontStyle: "ap-in-wall",
+    poePortRange: [1, 12],
+    specialSlots: [
+      { key: "sfp_1", label: "SFP+ LAN", port: 13, apiPort: 17, media: "sfp_plus" },
+      { key: "wan", label: "2.5G WAN", port: 14, apiPort: 19, media: "rj45" },
+      { key: "sfp_2", label: "SFP+ WAN", port: 15, apiPort: 20, media: "sfp_plus" }
+    ]
+  },
+  UXGMAX: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1, 2, 3, 4]],
+    portCount: 5,
+    displayModel: "UXG Max",
+    theme: "white",
+    specialSlots: [{ key: "wan", label: "WAN", port: 5 }]
+  },
+  UTR: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[2]],
+    portCount: 2,
+    displayModel: "UniFi Travel Router",
+    theme: "white",
+    specialSlots: [{ key: "wan", label: "WAN", port: 1 }]
+  },
+  UXGPRO: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [[1]],
+    portCount: 4,
+    displayModel: "UXG-Pro",
+    theme: "silver",
+    specialSlots: [
+      { key: "wan", label: "WAN", port: 2 },
+      { key: "sfp_1", label: "SFP+ LAN", port: 3 },
+      { key: "sfp_2", label: "SFP+ WAN", port: 4 }
+    ]
+  },
+  UXGL: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[1]],
+    portCount: 2,
+    displayModel: "UXG-Lite",
+    theme: "white",
+    specialSlots: [{ key: "wan", label: "WAN", port: 2 }]
+  },
+  UGW3: {
+    kind: "gateway",
+    frontStyle: "gateway-single-row",
+    rows: [[2]],
+    portCount: 3,
+    displayModel: "UniFi Security Gateway",
+    theme: "white",
+    specialSlots: [
+      { key: "wan", label: "WAN", port: 1 },
+      { key: "wan2", label: "WAN2/LAN2", port: 3 }
+    ]
+  },
+  UGW4: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [[3, 4]],
+    portCount: 6,
+    displayModel: "USG Pro 4",
+    theme: "silver",
+    specialSlots: [
+      { key: "wan", label: "WAN 1", port: 1 },
+      { key: "wan2", label: "WAN 2", port: 2 },
+      { key: "sfp_1", label: "SFP 1", port: 5 },
+      { key: "sfp_2", label: "SFP 2", port: 6 }
+    ]
+  },
+  UGWXG: {
+    kind: "gateway",
+    frontStyle: "gateway-rack",
+    rows: [range(2, 8)],
+    portCount: 9,
+    displayModel: "USG XG 8",
+    theme: "silver",
+    specialSlots: [
+      { key: "wan2", label: "WAN 2", port: 1 },
+      { key: "wan", label: "WAN", port: 9 }
+    ]
+  }
+};
+function getFakeDevices() {
+  return Object.entries(MODEL_REGISTRY).map(([modelKey, model]) => ({
+    id: `fake:${modelKey}`,
+    label: model.displayModel,
+    model: model.displayModel,
+    type: model.kind
+  }));
+}
+function resolveModelKey(device) {
+  const candidates = [device?.model, device?.hw_version, device?.name, device?.name_by_user].filter(Boolean).map(normalizeModelKey);
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (MODEL_REGISTRY[candidate]) return candidate;
+    if (candidate.includes("UDMPROSE")) return "UDMPROSE";
+    if (candidate.includes("UDMPROMAX")) return "UDMPROMAX";
+    if (candidate.includes("DREAMMACHINEPROMAX")) return "UDMPROMAX";
+    if (candidate.includes("UDMBEAST")) return "UDMBEAST";
+    if (candidate.includes("DREAMMACHINEBEAST")) return "UDMBEAST";
+    if (candidate === "EFG" || candidate.includes("UDMENT") || candidate.includes("ENTERPRISEFORTRESSGATEWAY")) return "EFG";
+    if (candidate.includes("UDMSE")) return "UDMPROSE";
+    if (candidate.includes("DREAMMACHINESE")) return "UDMPROSE";
+    if (candidate.includes("DREAMMACHINEPROSE")) return "UDMPROSE";
+    if (candidate.includes("UDMPRO")) return "UDMPRO";
+    if (candidate === "UAP") return "UAP";
+    if (candidate.includes("BZ2LR")) return "UAPLR";
+    if (candidate.includes("BZ2LZ")) return "UAPLR";
+    if (candidate.includes("BZ2")) return "UAP";
+    if (candidate === "U5O") return "UAPOUTDOOR5";
+    if (candidate.includes("UAPLR")) return "UAPLR";
+    if (candidate.includes("UAPPRO")) return "UAPPRO";
+    if (candidate.includes("UAPACMESHPRO") || candidate.includes("UAPACMPRO")) return "UAPACMPRO";
+    if (candidate.includes("UAPACMESH")) return "UAPACM";
+    if (candidate.includes("UAPACM")) return "UAPACM";
+    if (candidate.includes("UAPACLR")) return "UAPACLR";
+    if (candidate.includes("UAPACLITE")) return "UAPACLITE";
+    if (candidate.includes("U7PG2")) return "UAPACPRO";
+    if (candidate === "U7LT") return "UAPACLITE";
+    if (candidate === "U7HD") return "UAPHD";
+    if (candidate.includes("UMBBE634")) return "UMBBE634";
+    if (candidate.includes("UNIFI5GBACKUP")) return "UMBBE634";
+    if (candidate.includes("UACCMPOEAF")) return "UDB";
+    if (candidate.includes("UAPACPRO")) return "UAPACPRO";
+    if (candidate.includes("UAPACIWPRO") || candidate.includes("UAPACINWALLPRO")) return "UAPACIWPRO";
+    if (candidate.includes("UAPACIW")) return "UAPACIW";
+    if (candidate.includes("UAPIWHD") || candidate.includes("UAPINWALLHD")) return "UAPIWHD";
+    if (candidate === "UAPIW" || candidate.includes("UNIFIAPINWALL")) return "UAPIW";
+    if (candidate.includes("UAPAC")) return "UAPAC";
+    if (candidate.includes("UAPNANOHD")) return "UAPNANOHD";
+    if (candidate.includes("UAPFLEXHD")) return "UAPFLEXHD";
+    if (candidate.includes("UAPBEACONHD")) return "UAPBEACONHD";
+    if (candidate.includes("UAPSHD")) return "UAPSHD";
+    if (candidate.includes("UXSDM")) return "UWBXG";
+    if (candidate.includes("UCXG")) return "UAPXG";
+    if (candidate.includes("UAPXG")) return "UAPXG";
+    if (candidate.includes("U7NHD")) return "UAPNANOHD";
+    if (candidate.includes("UAPHD")) return "UAPHD";
+    if (candidate.includes("U6ENTERPRISEIW") || candidate.includes("U6ENTERPRISEINWALL")) return "U6ENTERPRISEIW";
+    if (candidate.includes("U6ENTIW")) return "U6ENTERPRISEIW";
+    if (candidate.includes("U6ENTERPRISE")) return "U6ENTERPRISE";
+    if (candidate.includes("U6ENT")) return "U6ENTERPRISE";
+    if (candidate === "U6M") return "U6MESH";
+    if (candidate.includes("U6MESH")) return "U6MESH";
+    if (candidate.includes("U6PLUS")) return "U6PLUS";
+    if (candidate.includes("U6PRO")) return "U6PRO";
+    if (candidate.includes("U6LR")) return "U6LR";
+    if (candidate.includes("U6LITE")) return "U6LITE";
+    if (candidate.includes("U6IW") || candidate.includes("U6INWALL")) return "U6IW";
+    if (candidate.includes("U6EXTENDER")) return "U6EXTENDER";
+    if (candidate.includes("U6EXT")) return "U6EXTENDER";
+    if (candidate.includes("UAP6MP")) return "U6PRO";
+    if (candidate.includes("UAP6")) return "U6LR";
+    if (candidate.includes("UALR6")) return "U6LR";
+    if (candidate.includes("UAL6")) return "U6LITE";
+    if (candidate.includes("UAM6")) return "U6MESH";
+    if (candidate.includes("U6MESHPRO")) return "U6MESHPRO";
+    if (candidate.includes("U7MP")) return "UAPACMPRO";
+    if (candidate.includes("U7IW")) return "U7IW";
+    if (candidate.includes("U7INWALL")) return "UAPA6A5";
+    if (candidate.includes("UAPA6A5")) return "UAPA6A5";
+    if (candidate.includes("G7LR")) return "G7LR";
+    if (candidate.includes("U7LR")) return "U7LR";
+    if (candidate.includes("U7MSH")) return "U7MSH";
+    if (candidate.includes("U7MESH")) return "U7MESH";
+    if (candidate.includes("U7LITE")) return "U7LITE";
+    if (candidate.includes("U7ULTRA")) return "U7LITE";
+    if (candidate.includes("U7UKU")) return "UKULTRA";
+    if (candidate.includes("U7ENT")) return "U7ENTERPRISE";
+    if (candidate.includes("U7PROXGWALL")) return "U7PROXGWALL";
+    if (candidate.includes("U7PROWALL")) return "U7PROWALL";
+    if (candidate.includes("UAPA6A4")) return "U7PROXGS";
+    if (candidate.includes("U7PROXGS")) return "U7PROXGS";
+    if (candidate.includes("U7PROXG")) return "U7PROXG";
+    if (candidate.includes("U7PROMAX")) return "U7PROMAX";
+    if (candidate.includes("UAPA6B0")) return "U7PROOUTDOOR";
+    if (candidate.includes("U7PROOUTDOOR")) return "U7PROOUTDOOR";
+    if (candidate.includes("U7PRO")) return "U7PRO";
+    if (candidate.includes("U7OUTDOOR")) return "U7OUTDOOR";
+    if (candidate.includes("UKPW")) return "UKPW";
+    if (candidate.includes("UWBXG")) return "UWBXG";
+    if (candidate.includes("UAPA6B1")) return "E7CAMPUS";
+    if (candidate.includes("E7CAMPUS")) return "E7CAMPUS";
+    if (candidate.includes("E7AUDIENCE")) return "E7AUDIENCE";
+    if (candidate === "E7" || candidate.startsWith("E7")) return "E7";
+    if (candidate.includes("UKULTRA")) return "UKULTRA";
+    if (candidate.includes("UBBXG") || candidate.includes("BUILDINGBRIDGEXG")) return "UBBXG";
+    if (candidate === "UBB" || candidate.includes("BUILDINGBRIDGE")) return "UBB";
+    if (candidate.includes("UAIRWIRE") || candidate.includes("AIRWIRE")) return "UAIRWIRE";
+    if (candidate.includes("UDBPROSECTOR") || candidate.includes("DEVICEBRIDGEPROSECTOR")) return "UDBPROSECTOR";
+    if (candidate.includes("UDBPRO") || candidate.includes("DEVICEBRIDGEPRO")) return "UDBPRO";
+    if (candidate.includes("UDBSWITCH") || candidate.includes("DEVICEBRIDGESWITCH")) return "UDBSWITCH";
+    if (candidate.includes("UDBIOT") || candidate.includes("DEVICEBRIDGEIOT")) return "UDBIOT";
+    if (candidate === "UDB" || candidate.includes("DEVICEBRIDGE")) return "UDB";
+    if (candidate.includes("UCGFIBER")) return "UCGFIBER";
+    if (candidate.includes("CLOUDGATEWAYFIBER")) return "UCGFIBER";
+    if (candidate === "UDM") return "UDM";
+    if (candidate.includes("DREAMMACHINE")) return "UDM";
+    if (candidate.includes("UDM67AUDR7")) return "UDR7";
+    if (candidate.includes("UDR7")) return "UDR7";
+    if (candidate.includes("DREAMROUTER7")) return "UDR7";
+    if (candidate.includes("UDR5GMAX")) return "UDR5GMAX";
+    if (candidate.includes("DREAMROUTER5GMAX")) return "UDR5GMAX";
+    if (candidate === "UDR") return "UDR";
+    if (candidate.includes("DREAMROUTER")) return "UDR";
+    if (candidate.includes("UDM67A")) return "UDM67A";
+    if (candidate.includes("UDRULT")) return "UDRULT";
+    if (candidate.includes("UCGULTRA")) return "UCGULTRA";
+    if (candidate.includes("CLOUDGATEWAYULTRA")) return "UCGULTRA";
+    if (candidate.includes("UCGMAX")) return "UCGMAX";
+    if (candidate.includes("CLOUDGATEWAYMAX")) return "UCGMAX";
+    if (candidate.includes("UCGINDUSTRIAL")) return "UCGINDUSTRIAL";
+    if (candidate.includes("CLOUDGATEWAYINDUSTRIAL")) return "UCGINDUSTRIAL";
+    if (candidate === "UX7" || candidate.includes("UNIFIEXPRESS7")) return "UX7";
+    if (candidate === "UX" || candidate === "UEX" || candidate.includes("UNIFIEXPRESS")) return "UX";
+    if (candidate === "UTR" || candidate.includes("UNIFITRAVELROUTER")) return "UTR";
+    if (candidate.includes("UXGMAX") || candidate.includes("UXGB")) return "UXGMAX";
+    if (candidate === "UXG" || candidate.includes("UXGLITE")) return "UXGL";
+    if (candidate.includes("UXGFIBER")) return "UCGFIBER";
+    if (candidate === "UDW" || candidate.includes("DREAMWALL")) return "UDW";
+    if (candidate === "UXGPRO") return "UXGPRO";
+    if (candidate.includes("UXGPRO")) return "UXGPRO";
+    if (candidate === "UXGL") return "UXGL";
+    if (candidate.includes("UXGLITE")) return "UXGL";
+    if (candidate.includes("UXGL")) return "UXGL";
+    if (candidate === "UGW3") return "UGW3";
+    if (candidate.includes("USG3P")) return "UGW3";
+    if (candidate.includes("USG3")) return "UGW3";
+    if (candidate === "UGW4") return "UGW4";
+    if (candidate.includes("USGPRO4")) return "UGW4";
+    if (candidate.includes("USG4")) return "UGW4";
+    if (candidate === "UGWXG") return "UGWXG";
+    if (candidate.includes("USGXG8")) return "UGWXG";
+    if (candidate === "USAGGPRO") return "USAGGPRO";
+    if (candidate.includes("PROAGGREGATION")) return "USAGGPRO";
+    if (candidate.includes("AGGREGATIONPRO")) return "USAGGPRO";
+    if (candidate === "USL8A") return "USL8A";
+    if (candidate.includes("USWAGGREGATION")) return "USL8A";
+    if (candidate.includes("SWITCHAGGREGATION")) return "USL8A";
+    if (candidate === "US648P") return "US648P";
+    if (candidate.includes("ENTERPRISE48")) return "US648P";
+    if (candidate === "US624P") return "US624P";
+    if (candidate.includes("ENTERPRISE24")) return "US624P";
+    if (candidate === "USXG24") return "USXG24";
+    if (candidate.includes("USWENTERPRISEXG24")) return "USXG24";
+    if (candidate.includes("ENTERPRISEXG24")) return "USXG24";
+    if (candidate === "US68P") return "US68P";
+    if (candidate.includes("ENTERPRISE8")) return "US68P";
+    if (candidate.includes("USWPROXG48POE")) return "USWPROXG48POE";
+    if (candidate.includes("USWPROXG48")) return "USWPROXG48";
+    if (candidate.includes("USWPROXG24POE")) return "USWPROXG24POE";
+    if (candidate.includes("USWPROXG24")) return "USWPROXG24";
+    if (candidate.includes("USWPROXG10POE")) return "USWPROXG10POE";
+    if (candidate.includes("USWPROXG8POE")) return "USWPROXG8POE";
+    if (candidate.includes("USWPROHD24POE")) return "USWPROHD24POE";
+    if (candidate.includes("USWPROHD24")) return "USWPROHD24";
+    if (candidate.includes("USWWANRJ45")) return "USWWANRJ45";
+    if (candidate.includes("USWWAN")) return "USWWAN";
+    if (candidate.includes("USWFLEXXG")) return "USWFLEXXG";
+    if (candidate.includes("FLEXXG")) return "USWFLEXXG";
+    if (candidate.includes("US6XG150")) return "USXG6POE";
+    if (candidate.includes("USXG6POE")) return "USXG6POE";
+    if (candidate.includes("USX6POE")) return "USXG6POE";
+    if (candidate.includes("MISSIONCRITICAL")) return "USWMISSIONCRITICAL";
+    if (candidate.includes("ECSAGGREGATION")) return "ECSAGGREGATION";
+    if (candidate.includes("ECS48SPOE")) return "ECS48SPOE";
+    if (candidate.includes("ECS48POE")) return "ECS48POE";
+    if (candidate.includes("ECS24SPOE")) return "ECS24SPOE";
+    if (candidate.includes("ECS24POE")) return "ECS24POE";
+    if (candidate === "USWINDUSTRIAL") return "USWINDUSTRIAL";
+    if (candidate.includes("USWINDUSTRIAL")) return "USWINDUSTRIAL";
+    if (candidate === "US48PRO") return "US48PRO";
+    if (candidate.includes("US48PRO2")) return "US48PRO2";
+    if (candidate.includes("US48PRO")) return "US48PRO";
+    if (candidate.includes("USWPRO48POE")) return "US48PRO";
+    if (candidate.includes("PRO48POE")) return "US48PRO";
+    if (candidate.includes("USWPRO48")) return "US48PRO2";
+    if (candidate.includes("SWITCHPRO48")) return "US48PRO2";
+    if (candidate.includes("PRO48")) return "US48PRO2";
+    if (candidate === "US24PRO2") return "US24PRO2";
+    if (candidate.includes("US24PRO2")) return "US24PRO2";
+    if (candidate === "US24PRO") return "US24PRO";
+    if (candidate.includes("USWPRO24POE")) return "US24PRO";
+    if (candidate.includes("PRO24POE")) return "US24PRO";
+    if (candidate.includes("US24PRO")) return "US24PRO";
+    if (candidate.includes("USWPRO24")) return "US24PRO2";
+    if (candidate.includes("SWITCHPRO24")) return "US24PRO2";
+    if (candidate === "USPM16P") return "USPM16P";
+    if (candidate.includes("USWPROMAX16POE")) return "USPM16P";
+    if (candidate.includes("PROMAX16POE")) return "USPM16P";
+    if (candidate === "USPM16") return "USPM16";
+    if (candidate.includes("USWPROMAX16")) return "USPM16";
+    if (candidate.includes("PROMAX16")) return "USPM16";
+    if (candidate === "USPM24P") return "USPM24P";
+    if (candidate.includes("USWPROMAX24POE")) return "USPM24P";
+    if (candidate.includes("PROMAX24POE")) return "USPM24P";
+    if (candidate === "USPM24") return "USPM24";
+    if (candidate.includes("USWPROMAX24")) return "USPM24";
+    if (candidate.includes("PROMAX24")) return "USPM24";
+    if (candidate === "USPM48P") return "USPM48P";
+    if (candidate.includes("USWPROMAX48POE")) return "USPM48P";
+    if (candidate.includes("PROMAX48POE")) return "USPM48P";
+    if (candidate === "USPM48") return "USPM48";
+    if (candidate.includes("USWPROMAX48")) return "USPM48";
+    if (candidate.includes("PROMAX48")) return "USPM48";
+    if (candidate.includes("USL16LPB")) return "USL16LPB";
+    if (candidate.includes("USL16LP")) return "USL16LP";
+    if (candidate.includes("USWLITE16")) return "USL16LPB";
+    if (candidate.includes("LITE16")) return "USL16LPB";
+    if (candidate.includes("LITE") && candidate.includes("16")) return "USL16LPB";
+    if (candidate.includes("USL8LPB")) return "USL8LPB";
+    if (candidate.includes("USL8LP")) return "USL8LP";
+    if (candidate.includes("USWLITE8")) return "USL8LPB";
+    if (candidate.includes("LITE8")) return "USL8LPB";
+    if (candidate.includes("LITE") && candidate.includes("8")) return "USL8LPB";
+    if (candidate === "US8") return "US8";
+    if (candidate.includes("USC8")) return "USC8";
+    if (candidate.includes("US8P60")) return "US8P60";
+    if (candidate.includes("US860W")) return "US8P60";
+    if (candidate.includes("US8P150")) return "US8P150";
+    if (candidate.includes("US8150W")) return "US8P150";
+    if (candidate.includes("S28150")) return "US8P150";
+    if (candidate.includes("US16P150")) return "US16P150";
+    if (candidate.includes("US16POE150")) return "US16P150";
+    if (candidate.includes("US16150W")) return "US16P150";
+    if (candidate.includes("S216150")) return "US16P150";
+    if (candidate.includes("S224250")) return "USL24P";
+    if (candidate.includes("S224500")) return "USL24P";
+    if (candidate.includes("S248500")) return "USL48P";
+    if (candidate.includes("S248750")) return "USL48P";
+    if (candidate.includes("USMINI")) return "USMINI";
+    if (candidate.includes("FLEXMINI")) return "USMINI";
+    if (candidate.includes("USWFLEXMINI")) return "USMINI";
+    if (candidate === "USWFLEX25G5") return "USWFLEX25G5";
+    if (candidate.includes("USWFLEX25G5")) return "USWFLEX25G5";
+    if (candidate.includes("USWED37")) return "USWFLEX25G8POE";
+    if (candidate.includes("USWED36")) return "USWFLEX25G8";
+    if (candidate.includes("USWED35")) return "USWFLEX25G5";
+    if (candidate.includes("FLEX25G5")) return "USWFLEX25G5";
+    if (candidate.includes("SWITCHFLEXMINI25G")) return "USWFLEX25G5";
+    if (candidate === "USWFLEX25G8POE") return "USWFLEX25G8POE";
+    if (candidate.includes("FLEX25G8POE")) return "USWFLEX25G8POE";
+    if (candidate === "USWFLEX25G8") return "USWFLEX25G8";
+    if (candidate.includes("FLEX25G8")) return "USWFLEX25G8";
+    if (candidate.includes("USWFLEX25G8")) return "USWFLEX25G8";
+    if (candidate === "USF5P") return "USF5P";
+    if (candidate.includes("USWFLEX")) return "USF5P";
+    if (candidate === "USWULTRA210W") return "USWULTRA210W";
+    if (candidate.includes("SWITCHULTRA210")) return "USWULTRA210W";
+    if (candidate.includes("USWULTRA210")) return "USWULTRA210W";
+    if (candidate === "USM8P210") return "USWULTRA210W";
+    if (candidate === "USWULTRA60W") return "USWULTRA60W";
+    if (candidate.includes("SWITCHULTRA60")) return "USWULTRA60W";
+    if (candidate.includes("USWULTRA60")) return "USWULTRA60W";
+    if (candidate === "USM8P60") return "USWULTRA60W";
+    if (candidate === "USWULTRA") return "USWULTRA";
+    if (candidate.includes("USWULTRA")) return "USWULTRA";
+    if (candidate.includes("SWITCHULTRA")) return "USWULTRA";
+    if (candidate === "USM8P") return "USWULTRA";
+    if (candidate === "USL16P") return "USL16P";
+    if (candidate.includes("USW16POE")) return "USL16P";
+    if (candidate.includes("USW16P")) return "USL16P";
+    if (candidate === "USL24P") return "USL24P";
+    if (candidate === "USL24PB") return "USL24P";
+    if (candidate === "USL24") return "USL24";
+    if (candidate.includes("USW24G2")) return "USL24";
+    if (candidate.includes("USW24POE")) return "USL24P";
+    if (candidate.includes("USW24P")) return "USL24P";
+    if (candidate === "USL48P") return "USL48P";
+    if (candidate === "USL48PB") return "USL48P";
+    if (candidate === "USL48") return "USL48";
+    if (candidate.includes("USW48G2")) return "USL48";
+    if (candidate.includes("USW48POE")) return "USL48P";
+    if (candidate.includes("USW48P")) return "USL48P";
+    if (candidate.includes("USW24NONPOE")) return "USL24";
+    if (candidate.includes("USW48NONPOE")) return "USL48";
+    if (candidate.includes("USW24")) return "USL24";
+    if (candidate.includes("USW48")) return "USL48";
+    if (candidate.startsWith("US24P")) return "USL24P";
+    if (candidate.startsWith("US48P")) return "USL48P";
+    if (candidate.startsWith("US24")) return "USL24";
+    if (candidate.startsWith("US48")) return "USL48";
+  }
+  return null;
+}
+function inferPortCountFromModel(device) {
+  const text = normalizeModelKey(
+    [device?.model, device?.name, device?.name_by_user].filter(Boolean).join(" ")
+  );
+  if (text.includes("UDMPROSE") || text.includes("UDMSE")) return 11;
+  if (text.includes("UDMPROMAX") || text.includes("DREAMMACHINEPROMAX")) return 11;
+  if (text.includes("UDMBEAST") || text.includes("DREAMMACHINEBEAST")) return 11;
+  if (text.includes("EFG") || text.includes("UDMENT") || text.includes("ENTERPRISEFORTRESSGATEWAY")) return 6;
+  if (text.includes("DREAMMACHINESE") || text.includes("DREAMMACHINEPROSE")) return 11;
+  if (text.includes("UDMPRO")) return 11;
+  if (text === "UDM" || text.includes("DREAMMACHINE")) return 5;
+  if (text === "UDR" || text.includes("DREAMROUTER")) return 5;
+  if (text.includes("UCGFIBER") || text.includes("CLOUDGATEWAYFIBER")) return 7;
+  if (text.includes("UDM67AUDR7") || text.includes("UDR7") || text.includes("DREAMROUTER7")) return 5;
+  if (text.includes("UDM67A")) return 11;
+  if (text.includes("UCGULTRA") || text.includes("CLOUDGATEWAYULTRA") || text.includes("UDRULT")) return 5;
+  if (text.includes("UCGMAX") || text.includes("CLOUDGATEWAYMAX")) return 5;
+  if (text.includes("UCGINDUSTRIAL") || text.includes("CLOUDGATEWAYINDUSTRIAL")) return 6;
+  if (text.includes("UDR5GMAX")) return 5;
+  if (text === "UX7" || text.includes("UNIFIEXPRESS7")) return 2;
+  if (text === "UX" || text.includes("UNIFIEXPRESS")) return 2;
+  if (text === "UTR" || text.includes("UNIFITRAVELROUTER")) return 2;
+  if (text.includes("UXGMAX") || text.includes("UXGB")) return 5;
+  if (text === "UXG") return 2;
+  if (text.includes("UXGFIBER")) return 7;
+  if (text === "UDW" || text.includes("DREAMWALL")) return 15;
+  if (text.includes("UXGPRO")) return 4;
+  if (text.includes("UXGL")) return 2;
+  if (text.includes("UGWXG") || text.includes("USGXG8")) return 9;
+  if (text.includes("UGW4")) return 6;
+  if (text.includes("UGWHD4")) return 4;
+  if (text.includes("UGW3")) return 3;
+  if (text.includes("USAGGPRO") || text.includes("PROAGGREGATION")) return 32;
+  if (text.includes("USL8A") || text.includes("USWAGGREGATION")) return 8;
+  if (text.includes("USL16LPB") || text.includes("USL16LP") || text.includes("USWLITE16POE") || text.includes("LITE16")) return 16;
+  if (text.includes("USL8LPB") || text.includes("USL8LP") || text.includes("USWLITE8POE") || text.includes("LITE8")) return 8;
+  if (text.includes("US8P60") || text.includes("US860W") || text.includes("USC8")) return 8;
+  if (text === "US8") return 8;
+  if (text.includes("US8P150")) return 10;
+  if (text.includes("S28150")) return 10;
+  if (text.includes("USMINI") || text.includes("FLEXMINI")) return 5;
+  if (text.includes("USWED37") || text.includes("USWED36")) return 10;
+  if (text.includes("USWFLEX25G5") || text.includes("USWED35") || text.includes("FLEX25G5") || text.includes("SWITCHFLEXMINI25G")) return 5;
+  if (text.includes("USWFLEX25G8POE") || text.includes("FLEX25G8POE") || text.includes("USWFLEX25G8")) return 10;
+  if (text.includes("USF5P") || text.includes("USWFLEX")) return 5;
+  if (text.includes("US16P150") || text.includes("US16P")) return 18;
+  if (text.includes("S216150")) return 18;
+  if (text.includes("USL16P")) return 18;
+  if (text.includes("US24PRO2") || text.includes("US24PRO") || text.includes("USWPRO24") || text.includes("SWITCHPRO24")) return 26;
+  if (text.includes("US48PRO2") || text.includes("US48PRO") || text.includes("USWPRO48") || text.includes("SWITCHPRO48")) return 52;
+  if (text.includes("USPM16P") || text.includes("USPM16") || text.includes("PROMAX16")) return 18;
+  if (text.includes("USPM24P") || text.includes("USPM24") || text.includes("PROMAX24")) return 26;
+  if (text.includes("USPM48P") || text.includes("USPM48") || text.includes("PROMAX48")) return 52;
+  if (text.includes("US648P") || text.includes("ENTERPRISE48POE")) return 52;
+  if (text.includes("US624P") || text.includes("ENTERPRISE24POE")) return 26;
+  if (text.includes("USXG24") || text.includes("ENTERPRISEXG24")) return 26;
+  if (text.includes("US68P") || text.includes("ENTERPRISE8POE")) return 10;
+  if (text.includes("USWPROXG48")) return 52;
+  if (text.includes("USWPROHD24")) return 28;
+  if (text.includes("USWPROXG24")) return 26;
+  if (text.includes("USWPROXG10POE")) return 12;
+  if (text.includes("USWPROXG8POE")) return 10;
+  if (text.includes("USWWANRJ45")) return 4;
+  if (text.includes("USWFLEXXG")) return 5;
+  if (text.includes("USWWAN")) return 4;
+  if (text.includes("US6XG150") || text.includes("USXG6POE") || text.includes("USX6POE")) return 6;
+  if (text.includes("MISSIONCRITICAL")) return 9;
+  if (text.includes("ECSAGGREGATION")) return 32;
+  if (text.includes("ECS48")) return 52;
+  if (text.includes("ECS24")) return 28;
+  if (text.includes("USWINDUSTRIAL")) return 10;
+  if (text.includes("USL48P") || text.includes("USL48")) return 52;
+  if (text.includes("USL24P") || text.includes("USL24")) return 26;
+  if (text.includes("S224250") || text.includes("S224500")) return 26;
+  if (text.includes("S248500") || text.includes("S248750")) return 52;
+  if (text.includes("USWULTRA")) return 8;
+  if (text.includes("48")) return 48;
+  if (text.includes("24")) return 24;
+  if (text.includes("16")) return 16;
+  return null;
+}
+function getDeviceLayout(device, discoveredPorts = []) {
+  const modelKey = resolveModelKey(device);
+  const normalizedText = normalizeModelKey(
+    [device?.model, device?.hw_version, device?.name, device?.name_by_user].filter(Boolean).join(" ")
+  );
+  const maxDiscoveredPort = discoveredPorts.length > 0 ? Math.max(...discoveredPorts.map((p) => p.port || 0)) : 0;
+  const inferredPortCount = inferPortCountFromModel(device) || (discoveredPorts.length > 0 ? Math.max(...discoveredPorts.map((p) => p.port)) : 0);
+  const looksSwitchLike = modelStartsWith(device, SWITCH_MODEL_PREFIXES);
+  const looksGatewayLike = modelStartsWith(device, GATEWAY_MODEL_PREFIXES);
+  let effectiveModelKey = modelKey;
+  if (effectiveModelKey === "UDM67A") {
+    if (normalizedText.includes("UDM67AUDR7") || normalizedText.includes("UDR7") || normalizedText.includes("DREAMROUTER7")) {
+      effectiveModelKey = "UDR7";
+    } else if (maxDiscoveredPort > 0 && maxDiscoveredPort <= 5) {
+      effectiveModelKey = "UDR7";
+    }
+  }
+  if (effectiveModelKey && MODEL_REGISTRY[effectiveModelKey]) {
+    return applyRj45LayoutHints({ modelKey: effectiveModelKey, ...MODEL_REGISTRY[effectiveModelKey] });
+  }
+  if (looksGatewayLike && inferredPortCount > 0) {
+    const lanPortCount = Math.max(1, inferredPortCount - 1);
+    return applyRj45LayoutHints({
+      modelKey: null,
+      kind: "gateway",
+      frontStyle: inferredPortCount > 8 ? "gateway-rack" : "gateway-single-row",
+      rows: [range(1, lanPortCount)],
+      portCount: inferredPortCount,
+      displayModel: device?.model || `UniFi Gateway (${inferredPortCount}p)`,
+      specialSlots: [{ key: "wan", label: "WAN", port: inferredPortCount }]
+    });
+  }
+  if (isAccessPointLikeModel(device) && !looksSwitchLike && !looksGatewayLike) {
+    return {
+      modelKey: null,
+      kind: "access_point",
+      frontStyle: "ap-disc",
+      rows: [],
+      portCount: 0,
+      displayModel: device?.model || "UniFi Access Point",
+      theme: "white",
+      specialSlots: []
+    };
+  }
+  if (inferredPortCount > 0) {
+    return applyRj45LayoutHints({
+      modelKey: null,
+      ...defaultSwitchLayout(inferredPortCount),
+      displayModel: device?.model || `UniFi Device (${inferredPortCount}p)`
+    });
+  }
+  if (looksSwitchLike) {
+    return applyRj45LayoutHints({
+      modelKey: null,
+      kind: "switch",
+      frontStyle: "single-row",
+      rows: [],
+      portCount: 0,
+      displayModel: device?.model || "UniFi Switch",
+      specialSlots: []
+    });
+  }
+  if (isAccessPointLikeModel(device)) {
+    return {
+      modelKey: null,
+      kind: "access_point",
+      frontStyle: "ap-disc",
+      rows: [],
+      portCount: 0,
+      displayModel: device?.model || "UniFi Access Point",
+      theme: "white",
+      specialSlots: []
+    };
+  }
+  return applyRj45LayoutHints({
+    modelKey: null,
+    kind: "gateway",
+    frontStyle: "gateway-generic",
+    rows: [],
+    portCount: 0,
+    displayModel: device?.model || "UniFi Gateway",
+    specialSlots: []
+  });
+}
+
+// src/identity.js
+function normalizeText(value) {
+  return String(value ?? "").trim();
+}
+function normalizeMac(value) {
+  const raw = String(value ?? "").toLowerCase().replace(/[^0-9a-f]/g, "");
+  if (raw.length !== 12) return null;
+  return raw.match(/.{1,2}/g)?.join(":") || null;
+}
+function extractFirstMac(value) {
+  const text = String(value ?? "");
+  const match = text.match(/(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}|[0-9a-f]{12}/i);
+  if (!match) return null;
+  return normalizeMac(match[0]);
+}
+function sameMac(a, b) {
+  const left = normalizeMac(a);
+  const right = normalizeMac(b);
+  return !!left && !!right && left === right;
+}
+function extractPrimaryMacFromConnections(connections) {
+  if (!Array.isArray(connections)) return null;
+  for (const entry of connections) {
+    if (!Array.isArray(entry) || entry.length < 2) continue;
+    const [type, value] = entry;
+    const key = String(type ?? "").toLowerCase();
+    if (key !== "mac") continue;
+    const mac = extractFirstMac(value);
+    if (mac) return mac;
+  }
+  for (const entry of connections) {
+    if (!Array.isArray(entry) || entry.length < 2) continue;
+    const mac = extractFirstMac(entry[1]);
+    if (mac) return mac;
+  }
+  return null;
+}
+function buildNormalizedDeviceIdentity(device) {
+  return {
+    device_id: device?.id || null,
+    model: normalizeText(device?.model),
+    manufacturer: normalizeText(device?.manufacturer),
+    name: normalizeText(device?.name_by_user || device?.name),
+    hw_version: normalizeText(device?.hw_version),
+    sw_version: normalizeText(device?.sw_version),
+    primary_mac: extractPrimaryMacFromConnections(device?.connections),
+    config_entries: Array.isArray(device?.config_entries) ? device.config_entries : []
+  };
+}
+function extractDeviceMacs(device) {
+  const macs = /* @__PURE__ */ new Set();
+  const candidates = [device?.connections, device?.identifiers];
+  for (const block of candidates) {
+    if (!Array.isArray(block)) continue;
+    for (const entry of block) {
+      if (!Array.isArray(entry) || entry.length < 2) continue;
+      const [, value] = entry;
+      const mac = extractFirstMac(value);
+      if (mac) macs.add(mac);
+    }
+  }
+  const primaryMac = extractPrimaryMacFromConnections(device?.connections);
+  if (primaryMac) macs.add(primaryMac);
+  return macs;
+}
+function findDeviceByMac(devices, mac) {
+  const normalized = normalizeMac(mac);
+  if (!normalized) return null;
+  for (const device of devices || []) {
+    const macs = extractDeviceMacs(device);
+    if (macs.has(normalized)) return device;
+  }
+  return null;
+}
+
+// src/unique-id.js
+var PORT_FEATURE_PREFIXES = {
+  port: "port_control",
+  power_cycle: "power_cycle",
+  poe: "poe_control",
+  poe_power: "poe_power",
+  port_rx: "port_rx",
+  port_tx: "port_tx",
+  port_bandwidth_rx: "port_rx",
+  port_bandwidth_tx: "port_tx",
+  port_link_speed: "link_speed"
+};
+var DEVICE_FEATURE_PREFIXES = {
+  device_restart: "restart",
+  device_uptime: "uptime",
+  device_clients: "clients",
+  device_state: "status",
+  cpu_utilization: "cpu_utilization",
+  memory_utilization: "memory_utilization",
+  temperature: "temperature",
+  "temperature-cpu": "sub_temperature",
+  device_cpu_utilization: "cpu_utilization",
+  device_memory_utilization: "memory_utilization",
+  device_temperature: "temperature",
+  device_sub_temperature: "sub_temperature",
+  device_uplink_mac: "uplink_mac",
+  rx: "client_rx",
+  tx: "client_tx",
+  wired_speed: "client_link_speed"
+};
+function parseUnifiPortUniqueId(uniqueId) {
+  const raw = String(uniqueId ?? "").trim().toLowerCase();
+  if (!raw) return null;
+  const match = raw.match(/^([a-z0-9_]+)-([0-9a-f:]{17}|[0-9a-f]{12})_(\d+)$/i);
+  if (!match) return null;
+  const [, prefix, macRaw, portRaw] = match;
+  const feature = PORT_FEATURE_PREFIXES[prefix] || null;
+  const mac = normalizeMac(macRaw);
+  const port = Number.parseInt(portRaw, 10);
+  if (!feature || !mac || !Number.isInteger(port)) return null;
+  return { feature, mac, port };
+}
+function parseUnifiDeviceUniqueId(uniqueId) {
+  const raw = String(uniqueId ?? "").trim().toLowerCase();
+  if (!raw) return null;
+  const match = raw.match(/^([a-z0-9_-]+)-([0-9a-f:]{17}|[0-9a-f]{12})$/i);
+  if (!match) return null;
+  const [, prefix, macRaw] = match;
+  const feature = DEVICE_FEATURE_PREFIXES[prefix] || null;
+  const mac = normalizeMac(macRaw);
+  if (!feature || !mac) return null;
+  return { feature, mac };
+}
+function parseUnifiObjectUniqueId(uniqueId) {
+  const raw = String(uniqueId ?? "").trim().toLowerCase();
+  if (!raw) return null;
+  const match = raw.match(/^(wlan|qr_code|regenerate_password|firewall_policy)-(.+)$/i);
+  if (!match) return null;
+  const [, prefix, objectId] = match;
+  const featureMap = {
+    wlan: "wlan_control",
+    qr_code: "wlan_qr_code",
+    regenerate_password: "wlan_regenerate_password",
+    firewall_policy: "firewall_policy"
+  };
+  return {
+    feature: featureMap[prefix] || null,
+    object_id: objectId || null
+  };
+}
+
+// src/capabilities.js
+function emptyBucket() {
+  return { active: 0, disabled: 0, hidden: 0 };
+}
+function statusKey(entity) {
+  if (entity?.disabled_by) return "disabled";
+  if (entity?.hidden_by) return "hidden";
+  return "active";
+}
+function inferCapability(entity, identity) {
+  const domain = String(entity?.entity_id || "").split(".")[0] || "";
+  const tk = String(entity?.translation_key || "").toLowerCase();
+  const uniqueId = entity?.unique_id || "";
+  const portInfo = parseUnifiPortUniqueId(uniqueId);
+  if (portInfo && sameMac(portInfo.mac, identity?.primary_mac)) {
+    if (portInfo.feature === "port_control") return "port_control";
+    if (portInfo.feature === "power_cycle") return "power_cycle";
+    if (portInfo.feature === "poe_power") return "poe_power";
+    if (portInfo.feature === "port_rx") return "port_rx";
+    if (portInfo.feature === "port_tx") return "port_tx";
+    if (portInfo.feature === "link_speed") return "link_speed";
+  }
+  const deviceInfo = parseUnifiDeviceUniqueId(uniqueId);
+  if (deviceInfo && sameMac(deviceInfo.mac, identity?.primary_mac)) {
+    if (deviceInfo.feature === "uplink_mac") return "uplink_mac";
+    if (deviceInfo.feature === "restart") return "restart";
+    if (deviceInfo.feature === "client_rx") return "client_rx";
+    if (deviceInfo.feature === "client_tx") return "client_tx";
+    if (deviceInfo.feature === "client_link_speed") return "link_speed";
+  }
+  const objectInfo = parseUnifiObjectUniqueId(uniqueId);
+  if (objectInfo?.feature === "wlan_control" || tk === "wlan_control") return "wlan_control";
+  if (objectInfo?.feature === "firewall_policy" || tk === "firewall_policy_control") {
+    return "firewall_policy";
+  }
+  if (domain === "button" && (tk === "restart" || tk === "reboot" || tk === "power_cycle")) {
+    return tk === "power_cycle" ? "power_cycle" : "restart";
+  }
+  if (domain === "sensor" && tk === "port_bandwidth_rx") return "port_rx";
+  if (domain === "sensor" && tk === "port_bandwidth_tx") return "port_tx";
+  if (domain === "sensor" && tk === "client_bandwidth_rx") return "client_rx";
+  if (domain === "sensor" && tk === "client_bandwidth_tx") return "client_tx";
+  if (domain === "sensor" && (tk === "port_link_speed" || tk === "link_speed")) return "link_speed";
+  if (domain === "sensor" && (tk === "poe_power" || tk === "port_poe_power" || tk === "poe_power_consumption")) {
+    return "poe_power";
+  }
+  if (domain === "switch" && tk === "poe_port_control") return "port_control";
+  if (domain === "sensor" && tk === "device_uplink_mac") return "uplink_mac";
+  return null;
+}
+function buildDeviceCapabilities(entities, identity) {
+  const counts = {
+    restart: emptyBucket(),
+    ports: emptyBucket(),
+    port_control: emptyBucket(),
+    power_cycle: emptyBucket(),
+    poe_power: emptyBucket(),
+    port_rx: emptyBucket(),
+    port_tx: emptyBucket(),
+    client_rx: emptyBucket(),
+    client_tx: emptyBucket(),
+    link_speed: emptyBucket(),
+    uplink_mac: emptyBucket(),
+    ap_stats: emptyBucket(),
+    led_control: emptyBucket(),
+    wlan_control: emptyBucket(),
+    firewall_policy: emptyBucket()
+  };
+  for (const entity of entities || []) {
+    const status = statusKey(entity);
+    const cap = inferCapability(entity, identity);
+    if (cap && counts[cap]) counts[cap][status] += 1;
+    const portInfo = parseUnifiPortUniqueId(entity?.unique_id || "");
+    if (portInfo && (!identity?.primary_mac || sameMac(portInfo.mac, identity?.primary_mac))) {
+      counts.ports[status] += 1;
+    }
+    const id = String(entity?.entity_id || "").toLowerCase();
+    if (id.startsWith("light.") && (id.includes("led") || String(entity?.translation_key || "").includes("led"))) {
+      counts.led_control[status] += 1;
+    }
+    if (id.startsWith("sensor.") && (id.includes("_clients") || id.includes("_uptime"))) {
+      counts.ap_stats[status] += 1;
+    }
+  }
+  const out = { counts };
+  for (const [key, bucket] of Object.entries(counts)) {
+    out[key] = bucket.active + bucket.disabled + bucket.hidden > 0;
+  }
+  return out;
+}
+
+// src/classify.js
+function normalizeModel(value) {
+  return String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function startsWithAny(value, prefixes) {
+  return prefixes.some((prefix) => value.startsWith(prefix));
+}
+function fromModel(model) {
+  if (startsWithAny(model, GATEWAY_MODEL_PREFIXES)) return "gateway";
+  if (startsWithAny(model, SWITCH_MODEL_PREFIXES)) return "switch";
+  if (startsWithAny(model, AP_MODEL_PREFIXES)) return "access_point";
+  return null;
+}
+function classifyDeviceType(identity, capabilities, entities = [], device = null) {
+  const model = normalizeModel(identity?.model || identity?.hw_version || "");
+  const manufacturer = String(identity?.manufacturer || "").toLowerCase();
+  const name = String(identity?.name || "").toLowerCase();
+  const translationKeys = new Set((entities || []).map((entity) => String(entity?.translation_key || "").toLowerCase()));
+  const registryType = fromModel(model);
+  if (registryType) return registryType;
+  const gatewaySignals = model.startsWith("UXG") || model.startsWith("UDM") || model.startsWith("UCG") || model.startsWith("UGW") || model.startsWith("UX") || model.startsWith("UDW") || model.startsWith("EFG") || model.startsWith("UTR") || name.includes("gateway") || name.includes("router");
+  if (gatewaySignals) return "gateway";
+  const modelKey = resolveModelKey(device || identity || {});
+  const gatewayModelKeys = ["UDM", "UDR", "UDMPRO", "UDMPROSE", "UDMPROMAX", "UDMBEAST", "UXGPRO", "UXGL", "UXGMAX", "UX", "UX7", "UGW3", "UGW4", "UGWXG", "UCGULTRA", "UCGMAX", "UCGFIBER", "UCGINDUSTRIAL", "UDR7", "UDRULT", "UDR5GMAX", "UDW", "EFG", "UTR"];
+  const hasPortSignals = !!(capabilities?.ports || capabilities?.port_control || capabilities?.poe_power);
+  if (modelKey) {
+    if (gatewayModelKeys.includes(modelKey)) {
+      return "gateway";
+    }
+    if (["USMINI", "USWULTRA", "US8P60", "US8P150", "USL8LP", "USL16LP", "US24PRO", "US48PRO"].includes(modelKey) || modelKey.startsWith("US") || modelKey.startsWith("ECS")) {
+      return "switch";
+    }
+  }
+  if (capabilities?.ap_stats || capabilities?.uplink_mac) return "access_point";
+  if (hasPortSignals) return "switch";
+  if (manufacturer.includes("ubiquiti") || manufacturer.includes("unifi")) {
+    if (name.includes("switch")) return "switch";
+    if (name.includes("access point") || name.includes(" ap")) return "access_point";
+  }
+  if (translationKeys.has("port_control") || translationKeys.has("poe_port_control")) return "switch";
+  if (translationKeys.has("device_uplink_mac")) return "access_point";
+  const entityIds = (entities || []).map((e) => String(e?.entity_id || "").toLowerCase());
+  if (entityIds.some((id) => id.includes("_port_") || id.includes("_sfp_"))) return "switch";
+  return "unknown";
+}
+
+// src/helpers.js
+function normalize(value) {
+  return String(value ?? "").trim();
+}
+function lower(value) {
+  return normalize(value).toLowerCase();
+}
+function normalizePositivePortNumbers(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map((entry) => Number(entry)).filter((port) => Number.isInteger(port) && port > 0))).sort((a, b) => a - b);
+}
+function normalizePortNames(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const normalized = {};
+  for (const [rawPort, rawName] of Object.entries(value)) {
+    const port = Number.parseInt(rawPort, 10);
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    if (!Number.isInteger(port) || port < 1 || String(port) !== String(rawPort).trim() || !name) continue;
+    normalized[port] = name;
+  }
+  return normalized;
+}
+function applyPortNames(slotData, portNames) {
+  const normalized = normalizePortNames(portNames);
+  const apply = (slots) => (slots || []).map((slot) => {
+    const name = normalized[slot?.port];
+    return name ? { ...slot, port_label: name } : slot;
+  });
+  return {
+    specials: apply(slotData?.specials),
+    numbered: apply(slotData?.numbered)
+  };
+}
+function entityText(entity) {
+  const translationValues = entity?.translation_placeholders && typeof entity.translation_placeholders === "object" ? Object.values(entity.translation_placeholders) : [];
+  return lower(
+    [
+      entity?.entity_id,
+      entity?.unique_id,
+      entity?.original_name,
+      entity?.name,
+      entity?.platform,
+      entity?.device_class,
+      entity?.translation_key,
+      entity?.original_device_class,
+      ...translationValues
+    ].filter(Boolean).join(" ")
+  );
+}
+function isUnifiConfigEntry(entry) {
+  const domain = lower(entry?.domain);
+  const title = lower(entry?.title);
+  return domain === "unifi" || domain === "unifi_network" || domain.includes("unifi") || title.includes("unifi");
+}
+function extractUnifiEntryIds(configEntries) {
+  return new Set(
+    (configEntries || []).filter(isUnifiConfigEntry).map((e) => e.entry_id)
+  );
+}
+function hasUbiquitiManufacturer(device) {
+  const m = lower(device?.manufacturer);
+  return m.includes("ubiquiti") || m.includes("unifi");
+}
+function normalizeModelStr(value) {
+  return String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+var INDEXED_PORT_ID_RE = /(?:^|[_-])(?:port|lan|eth|ethernet)[_-]?(\d+)(?:[_-]|$)|(?:^|[_-])sfp(?:28)?[_-]?(\d+)(?:[_-]|$)/i;
+function findIndexedPortIdMatch(value) {
+  const match = String(value || "").match(INDEXED_PORT_ID_RE);
+  if (!match) return null;
+  return [match[0], match[1] || match[2]];
+}
+function hasIndexedPortId(entityId) {
+  return !!findIndexedPortIdMatch(entityId);
+}
+function modelStartsWith2(device, prefixes) {
+  const candidates = [device?.model, device?.hw_version].filter(Boolean).map(normalizeModelStr);
+  return prefixes.some((pfx) => candidates.some((c) => c.startsWith(pfx)));
+}
+function isVirtualControllerDevice(device) {
+  const model = lower(device?.model);
+  const name = lower(device?.name_by_user || device?.name);
+  const combined = `${model} ${name}`;
+  return combined.includes("network application") || combined.includes("unifi os") || combined.includes("controller");
+}
+function hasInfrastructureEntitySignals(entities = []) {
+  const hasPortEntities = entities.some((e) => hasIndexedPortId(e?.entity_id));
+  if (hasPortEntities) return true;
+  const hasRebootControl = entities.some((e) => {
+    const id = lower(e?.entity_id);
+    if (!id.startsWith("button.")) return false;
+    return id.includes("reboot") || id.includes("restart") || id.includes("power_cycle");
+  });
+  if (hasRebootControl) return true;
+  return entities.some((e) => {
+    const id = lower(e?.entity_id);
+    if (!id.startsWith("sensor.") && !id.startsWith("binary_sensor.")) return false;
+    const parsed = parseUnifiDeviceUniqueId(e?.unique_id);
+    return id.includes("cpu") || id.includes("memory") || id.includes("temperature") || id.endsWith("_uptime") || id.includes("_uptime_") || id.endsWith("_clients") || id.includes("_clients_") || ["uptime", "clients", "status"].includes(parsed?.feature);
+  });
+}
+function getDeviceType(device, entities = []) {
+  const identity = buildNormalizedDeviceIdentity(device);
+  const capabilities = buildDeviceCapabilities(entities, identity);
+  return classifyDeviceType(identity, capabilities, entities, device);
+}
+function getWSErrorCode(err) {
+  if (err?.code != null) return err.code;
+  if (err?.error?.code != null) return err.error.code;
+  return null;
+}
+function getWSErrorMessage(err) {
+  return String(err?.message ?? err?.error?.message ?? "").toLowerCase();
+}
+function isIgnorableWSError(err) {
+  const code = getWSErrorCode(err);
+  const msg = getWSErrorMessage(err);
+  return code === 3 || code === "3" || code === "unknown_command" || msg.includes("unknown command") || msg.includes("not connected") || msg.includes("disconnected") || msg.includes("socket closed") || msg.includes("connection lost");
+}
+async function safeCallWS(hass, msg, fallback = []) {
+  try {
+    return await hass.callWS(msg);
+  } catch (err) {
+    if (!isIgnorableWSError(err)) {
+      console.warn("[unifi-device-card] WS failed", msg?.type, err);
+    }
+    return fallback;
+  }
+}
+var REGISTRY_CACHE_TTL = 3e4;
+var _registryCache = /* @__PURE__ */ new WeakMap();
+var _registryInflight = /* @__PURE__ */ new WeakMap();
+var DEVICE_CONTEXT_CACHE_TTL = 3e4;
+var _deviceContextCache = /* @__PURE__ */ new WeakMap();
+var _deviceContextInflight = /* @__PURE__ */ new WeakMap();
+function normalizePortsPerRowForCache(cardConfig) {
+  const raw = Number.parseInt(cardConfig?.ports_per_row, 10);
+  if (!Number.isFinite(raw) || raw < 1) return "";
+  return String(Math.floor(raw));
+}
+function getDeviceContextCacheKey(deviceId, cardConfig) {
+  const source = cardConfig?.fake_device === true ? "fake" : "real";
+  return `${source}::${deviceId}::${normalizePortsPerRowForCache(cardConfig) || "auto"}`;
+}
+function getContextCacheStore(map, hass) {
+  if (!map.has(hass)) map.set(hass, /* @__PURE__ */ new Map());
+  return map.get(hass);
+}
+function flattenEntitiesByDevice(map) {
+  if (!map || typeof map.values !== "function") return [];
+  return Array.from(map.values()).flat();
+}
+async function getAllData(hass) {
+  const now = Date.now();
+  const cached = _registryCache.get(hass);
+  if (cached && now - cached.ts < REGISTRY_CACHE_TTL) {
+    return cached.data;
+  }
+  const inflight = _registryInflight.get(hass);
+  if (inflight) return inflight;
+  const promise = (async () => {
+    const fallbackDevices = cached?.data?.devices || [];
+    const fallbackEntities = flattenEntitiesByDevice(
+      cached?.data?.allEntitiesByDevice || cached?.data?.entitiesByDevice
+    );
+    const fallbackConfigEntries = cached?.data?.configEntries || [];
+    const [devices, rawEntities, configEntries] = await Promise.all([
+      safeCallWS(hass, { type: "config/device_registry/list" }, fallbackDevices),
+      safeCallWS(hass, { type: "config/entity_registry/list" }, fallbackEntities),
+      safeCallWS(hass, { type: "config/config_entries" }, fallbackConfigEntries)
+    ]);
+    const allEntities = rawEntities || [];
+    const entities = allEntities.filter((e) => !e.disabled_by && !e.hidden_by);
+    const entitiesByDevice = /* @__PURE__ */ new Map();
+    for (const entity of entities) {
+      if (!entity.device_id) continue;
+      if (!entitiesByDevice.has(entity.device_id)) {
+        entitiesByDevice.set(entity.device_id, []);
+      }
+      entitiesByDevice.get(entity.device_id).push(entity);
+    }
+    const allEntitiesByDevice = /* @__PURE__ */ new Map();
+    for (const entity of allEntities) {
+      if (!entity.device_id) continue;
+      if (!allEntitiesByDevice.has(entity.device_id)) {
+        allEntitiesByDevice.set(entity.device_id, []);
+      }
+      allEntitiesByDevice.get(entity.device_id).push(entity);
+    }
+    const data = {
+      devices: devices || [],
+      entitiesByDevice,
+      allEntitiesByDevice,
+      configEntries: configEntries || []
+    };
+    if ((data.devices?.length || 0) > 0 || entities.length > 0) {
+      _registryCache.set(hass, { ts: Date.now(), data });
+    }
+    return data;
+  })();
+  _registryInflight.set(hass, promise);
+  try {
+    return await promise;
+  } finally {
+    _registryInflight.delete(hass);
+  }
+}
+function isUnifiDevice(device, unifiEntryIds, entities) {
+  if (isVirtualControllerDevice(device)) return false;
+  const hasInfraSignals = hasInfrastructureEntitySignals(entities);
+  if (Array.isArray(device?.config_entries) && device.config_entries.some((id) => unifiEntryIds.has(id))) {
+    if (hasInfraSignals || !!resolveModelKey(device)) return true;
+    if (modelStartsWith2(device, [
+      ...SWITCH_MODEL_PREFIXES,
+      ...GATEWAY_MODEL_PREFIXES,
+      ...AP_MODEL_PREFIXES
+    ])) {
+      return true;
+    }
+    if (hasUbiquitiManufacturer(device) && getDeviceType(device, entities) !== "unknown") {
+      return true;
+    }
+    return false;
+  }
+  if (resolveModelKey(device)) return true;
+  if (modelStartsWith2(device, [
+    ...SWITCH_MODEL_PREFIXES,
+    ...GATEWAY_MODEL_PREFIXES,
+    ...AP_MODEL_PREFIXES
+  ])) {
+    return true;
+  }
+  if (entities.some((e) => hasIndexedPortId(e.entity_id)) && hasUbiquitiManufacturer(device)) {
+    return true;
+  }
+  if (hasUbiquitiManufacturer(device) && getDeviceType(device, entities) === "access_point" && hasInfraSignals) {
+    return true;
+  }
+  return false;
+}
+function buildDeviceLabel(device, type) {
+  const name = normalize(device.name_by_user) || normalize(device.name) || normalize(device.model) || "Unknown device";
+  const model = normalize(device.model);
+  const typeLabel = type === "gateway" ? "Gateway" : type === "access_point" ? "Access Point" : "Switch";
+  if (model && lower(model) !== lower(name)) return `${name} \xB7 ${model} (${typeLabel})`;
+  return `${name} (${typeLabel})`;
+}
+function extractFirmware(device) {
+  if (normalize(device?.sw_version)) return normalize(device.sw_version);
+  return "";
+}
+function isSensorEntity(entity) {
+  return lower(entity?.entity_id).startsWith("sensor.");
+}
+function findDeviceEntityByPatterns(entities, patterns = [], candidateIsValid = null) {
+  for (const entity of entities || []) {
+    if (!isSensorEntity(entity)) continue;
+    if (isPortLevelTelemetrySensor(entity)) continue;
+    const text = entityText(entity);
+    if (patterns.some((pattern) => text.includes(pattern))) {
+      if (candidateIsValid && !candidateIsValid(entity, text)) continue;
+      return entity.entity_id;
+    }
+  }
+  return null;
+}
+function isPortLevelTelemetrySensor(entity) {
+  const text = typeof entity === "string" ? lower(entity) : entityText(entity);
+  return hasIndexedPortId(text) || text.includes("_wan_") || text.includes("link_speed") || text.includes("port_link_speed") || text.includes("port_bandwidth") || text.includes("poe_power") || text.includes("_rx") || text.includes("_tx") || text.includes("throughput");
+}
+function findSystemStatEntity(entities, includePatterns = [], excludePatterns = [], candidateIsValid = null) {
+  for (const entity of entities || []) {
+    if (!isSensorEntity(entity)) continue;
+    if (isPortLevelTelemetrySensor(entity)) continue;
+    const text = entityText(entity);
+    if (!includePatterns.some((pattern) => text.includes(pattern))) continue;
+    if (excludePatterns.some((pattern) => text.includes(pattern))) continue;
+    if (candidateIsValid && !candidateIsValid(entity, text)) continue;
+    return entity.entity_id;
+  }
+  return null;
+}
+var NON_TEMPERATURE_TELEMETRY_PATTERNS = [
+  "uptime",
+  "last_seen",
+  "last seen",
+  "lastseen",
+  "timestamp",
+  "date_time",
+  "datetime",
+  "date",
+  "time",
+  "duration",
+  "connected_at",
+  "updated_at"
+];
+var TEMPERATURE_TELEMETRY_TEXT_PATTERNS = [
+  "device_temperature",
+  "system_temperature",
+  "board_temperature",
+  "chassis_temperature",
+  "internal_temperature",
+  "ambient_temperature",
+  "sensor.temperature"
+];
+var ABBREVIATED_TEMPERATURE_TEXT_RE = /(?:^|[._\-\s])(?:device|system|board|chassis|internal|ambient)?[._\-\s]?temp(?:$|[._\-\s])/;
+function hasTemperatureDeviceClass(entity) {
+  return lower(entity?.device_class) === "temperature" || lower(entity?.original_device_class) === "temperature";
+}
+function hasNonTemperatureTelemetrySignal(entity, text = entityText(entity)) {
+  const deviceClass = lower(entity?.device_class);
+  const originalDeviceClass = lower(entity?.original_device_class);
+  if (["timestamp", "date", "datetime", "duration"].includes(deviceClass)) return true;
+  if (["timestamp", "date", "datetime", "duration"].includes(originalDeviceClass)) return true;
+  return NON_TEMPERATURE_TELEMETRY_PATTERNS.some((pattern) => text.includes(pattern));
+}
+function hasTemperatureTextSignal(text) {
+  return TEMPERATURE_TELEMETRY_TEXT_PATTERNS.some((pattern) => text.includes(pattern)) || ABBREVIATED_TEMPERATURE_TEXT_RE.test(text);
+}
+function isValidTemperatureTelemetryEntity(entity, { allowSubTemperature = true } = {}) {
+  if (!isSensorEntity(entity)) return false;
+  if (isPortLevelTelemetrySensor(entity)) return false;
+  const text = entityText(entity);
+  if (hasNonTemperatureTelemetrySignal(entity, text)) return false;
+  if (hasTemperatureDeviceClass(entity)) return true;
+  const parsed = parseUnifiDeviceUniqueId(entity?.unique_id);
+  if (parsed?.feature === "temperature") return true;
+  if (allowSubTemperature && parsed?.feature === "sub_temperature") return true;
+  const translationKey = lower(entity?.translation_key);
+  if (translationKey === "device_temperature") return true;
+  if (allowSubTemperature && translationKey === "device_sub_temperature") return true;
+  const uid = lower(entity?.unique_id);
+  if (uid.startsWith("device_temperature-")) return true;
+  if (allowSubTemperature && uid.startsWith("temperature-cpu-")) return true;
+  return hasTemperatureTextSignal(text);
+}
+var HEADER_TELEMETRY_MATCHERS = {
+  cpu_utilization: {
+    features: /* @__PURE__ */ new Set(["cpu_utilization"]),
+    translationKeys: /* @__PURE__ */ new Set(["device_cpu_utilization"]),
+    uniqueIdPrefixes: ["cpu_utilization-"]
+  },
+  cpu_temperature: {
+    features: /* @__PURE__ */ new Set(["sub_temperature"]),
+    translationKeys: /* @__PURE__ */ new Set(["device_sub_temperature"]),
+    uniqueIdPrefixes: ["temperature-cpu-"],
+    textPatterns: ["cpu", "processor", "temperature-cpu"]
+  },
+  memory_utilization: {
+    features: /* @__PURE__ */ new Set(["memory_utilization"]),
+    translationKeys: /* @__PURE__ */ new Set(["device_memory_utilization"]),
+    uniqueIdPrefixes: ["memory_utilization-"]
+  },
+  temperature: {
+    features: /* @__PURE__ */ new Set(["temperature"]),
+    translationKeys: /* @__PURE__ */ new Set(["device_temperature"]),
+    uniqueIdPrefixes: ["device_temperature-"]
+  },
+  sub_temperature: {
+    features: /* @__PURE__ */ new Set(["sub_temperature"]),
+    translationKeys: /* @__PURE__ */ new Set(["device_sub_temperature"])
+  }
+};
+function matchesHeaderTelemetryTarget(entity, target) {
+  if (!isSensorEntity(entity)) return false;
+  if ((target === "temperature" || target === "sub_temperature") && !isValidTemperatureTelemetryEntity(entity)) {
+    return false;
+  }
+  const matcher = HEADER_TELEMETRY_MATCHERS[target];
+  if (!matcher) return false;
+  const parsed = parseUnifiDeviceUniqueId(entity?.unique_id);
+  if (parsed?.feature && matcher.features?.has(parsed.feature)) {
+    if (!matcher.textPatterns?.length) return true;
+    const text = entityText(entity);
+    return matcher.textPatterns.some((pattern) => text.includes(pattern));
+  }
+  const uid = lower(entity?.unique_id);
+  if (uid && matcher.uniqueIdPrefixes?.some((prefix) => uid.startsWith(prefix))) {
+    if (!matcher.textPatterns?.length) return true;
+    const text = entityText(entity);
+    return matcher.textPatterns.some((pattern) => text.includes(pattern));
+  }
+  const tk = lower(entity?.translation_key);
+  if (matcher.translationKeys?.has(tk)) {
+    if (!matcher.textPatterns?.length) return true;
+    const text = entityText(entity);
+    return matcher.textPatterns.some((pattern) => text.includes(pattern));
+  }
+  return false;
+}
+function findHeaderTelemetryEntity(entities, target) {
+  for (const entity of entities || []) {
+    if (matchesHeaderTelemetryTarget(entity, target)) return entity.entity_id;
+  }
+  return null;
+}
+function findFallbackSubTemperatureEntity(entities) {
+  for (const entity of entities || []) {
+    if (!matchesHeaderTelemetryTarget(entity, "sub_temperature")) continue;
+    const text = entityText(entity);
+    if (text.includes("cpu") || text.includes("processor")) continue;
+    return entity.entity_id;
+  }
+  return null;
+}
+function classifyHeaderTelemetryWarningType(entity) {
+  if (matchesHeaderTelemetryTarget(entity, "cpu_utilization")) return "header_cpu";
+  if (matchesHeaderTelemetryTarget(entity, "memory_utilization")) return "header_memory";
+  if (matchesHeaderTelemetryTarget(entity, "cpu_temperature")) return "header_cpu_temperature";
+  if (matchesHeaderTelemetryTarget(entity, "temperature")) return "header_temperature";
+  if (matchesHeaderTelemetryTarget(entity, "sub_temperature")) return "header_temperature";
+  return null;
+}
+function prioritizeAvailableTelemetryEntities(entities, hass) {
+  if (!hass?.states) return entities || [];
+  return (entities || []).map((entity, index) => {
+    const state = hass.states[entity?.entity_id];
+    const hasUsableState = !!state && state.state !== "unknown" && state.state !== "unavailable";
+    return { entity, index, hasUsableState };
+  }).sort(
+    (left, right) => Number(right.hasUsableState) - Number(left.hasUsableState) || left.index - right.index
+  ).map(({ entity }) => entity);
+}
+function preferUsableTelemetryMatch(entityIds, hass) {
+  const matches = entityIds.filter(Boolean);
+  if (!hass?.states) return matches[0] || null;
+  return matches.find((entityId) => {
+    const state = hass.states[entityId];
+    return state && state.state !== "unknown" && state.state !== "unavailable";
+  }) || matches[0] || null;
+}
+function getDeviceTelemetry(entities, hass = null) {
+  const candidates = prioritizeAvailableTelemetryEntities(entities, hass);
+  const coreCpuUtilization = findHeaderTelemetryEntity(candidates, "cpu_utilization");
+  const coreCpuTemperature = findHeaderTelemetryEntity(candidates, "cpu_temperature");
+  const coreMemoryUtilization = findHeaderTelemetryEntity(candidates, "memory_utilization");
+  return {
+    cpu_utilization_entity: preferUsableTelemetryMatch([
+      coreCpuUtilization,
+      findDeviceEntityByPatterns(candidates, ["cpu_utilization", "cpu_usage", "processor_utilization"]),
+      findSystemStatEntity(candidates, ["cpu"], ["temperature", "temp", "clock", "frequency", "fan"])
+    ], hass),
+    cpu_temperature_entity: preferUsableTelemetryMatch([
+      coreCpuTemperature,
+      findDeviceEntityByPatterns(candidates, ["cpu_temperature", "processor_temperature", "temperature_cpu", "temperature-cpu"]),
+      findSystemStatEntity(candidates, ["cpu_temp", "cpu_temperature", "processor_temperature", "temperature_cpu", "cpu"], ["utilization", "usage", "clock", "frequency"])
+    ], hass),
+    memory_utilization_entity: preferUsableTelemetryMatch([
+      coreMemoryUtilization,
+      findDeviceEntityByPatterns(candidates, ["memory_utilization", "memory_usage", "ram_utilization"]),
+      findSystemStatEntity(candidates, ["memory", "ram"], ["temperature", "temp", "slot"])
+    ], hass),
+    temperature_entity: preferUsableTelemetryMatch([
+      findHeaderTelemetryEntity(candidates, "temperature"),
+      findFallbackSubTemperatureEntity(candidates),
+      findDeviceEntityByPatterns(
+        candidates,
+        ["device_temperature", "system_temperature", "board_temperature", "chassis_temperature"],
+        (entity) => isValidTemperatureTelemetryEntity(entity, { allowSubTemperature: false })
+      ),
+      findSystemStatEntity(
+        candidates,
+        ["temperature", "temp"],
+        ["cpu", "processor", "memory", "ram", "wan", "sfp", "uplink", "link_speed", "link", "rx", "tx", "throughput", "poe", "fan"],
+        (entity) => isValidTemperatureTelemetryEntity(entity, { allowSubTemperature: false })
+      )
+    ], hass)
+  };
+}
+function getUnavailableHeaderTelemetryKeys(deviceContext) {
+  if (!deviceContext) return [];
+  const unavailable = [];
+  if (!deviceContext.cpu_utilization_entity) unavailable.push("cpu_utilization");
+  if (!deviceContext.memory_utilization_entity) unavailable.push("memory_utilization");
+  if (!deviceContext.cpu_temperature_entity && !deviceContext.temperature_entity) {
+    unavailable.push("temperature");
+  }
+  return unavailable;
+}
+function getDeviceOnlineEntity(entities) {
+  for (const entity of entities || []) {
+    const id = lower(entity.entity_id);
+    if (!id.startsWith("binary_sensor.")) continue;
+    if (id.endsWith("_is_online") || id.endsWith("_status") || id.includes("_connected") || id.includes("is_online")) {
+      return entity.entity_id;
+    }
+  }
+  for (const entity of entities || []) {
+    const id = lower(entity.entity_id);
+    if (!id.startsWith("sensor.")) continue;
+    if (id.endsWith("_state") || id.endsWith("_status") || id.includes("_connected") || id.includes("is_online")) {
+      return entity.entity_id;
+    }
+  }
+  return null;
+}
+var DEVICE_STAT_MATCHERS = {
+  uptime: {
+    features: /* @__PURE__ */ new Set(["uptime"]),
+    translationKeys: /* @__PURE__ */ new Set(["uptime", "device_uptime"]),
+    textPatterns: ["uptime", "device_uptime"],
+    fallbackId: (id) => id.endsWith("_uptime") || id.includes(" uptime") || id.includes("_uptime_") || id.includes("uptime")
+  },
+  clients: {
+    features: /* @__PURE__ */ new Set(["clients"]),
+    translationKeys: /* @__PURE__ */ new Set(["clients", "device_clients", "connected_clients", "client_count", "num_clients", "active_clients", "station_count"]),
+    textPatterns: ["clients", "device_clients", "connected_clients", "client_count", "num_clients", "active_clients", "station_count"],
+    fallbackId: (id) => id.endsWith("_clients") || id.includes("_clients_") || id.includes(" clients")
+  },
+  status: {
+    features: /* @__PURE__ */ new Set(["status"]),
+    translationKeys: /* @__PURE__ */ new Set(["state", "status", "device_state", "device_status"]),
+    textPatterns: ["state", "status", "device_state", "device_status"],
+    fallbackId: (id) => id.endsWith("_state") || id.includes("_state_") || id.endsWith("_status") || id.includes("_status_")
+  }
+};
+function canonicalStatText(value) {
+  return lower(value).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+function hasPortLevelStatSignal(entity) {
+  if (parseUnifiPortUniqueId(entity?.unique_id)) return true;
+  if (hasIndexedPortId(entity?.entity_id)) return true;
+  const displayText = [entity?.original_name, entity?.name].filter(Boolean).join(" ");
+  return /\b(?:port|lan|eth|ethernet|sfp(?:28)?)\s*\d+\b/i.test(displayText);
+}
+function getDeviceStatDisplayText(entity) {
+  return canonicalStatText([entity?.original_name, entity?.name].filter(Boolean).join(" "));
+}
+function getDeviceStatFallbackText(entity) {
+  return canonicalStatText([entity?.entity_id, entity?.original_name, entity?.name].filter(Boolean).join(" "));
+}
+function statTextIncludes(text, patterns) {
+  return patterns.some((pattern) => {
+    const canonicalPattern = canonicalStatText(pattern);
+    return text === canonicalPattern || text.includes(canonicalPattern);
+  });
+}
+function isUnambiguousDeviceStatTranslationKey(entity, stat, matcher) {
+  const tk = lower(entity?.translation_key);
+  if (!matcher.translationKeys.has(tk)) return false;
+  if (tk.startsWith("device_")) return true;
+  return stat !== "status";
+}
+function findDeviceStatEntity(entities, stat) {
+  const matcher = DEVICE_STAT_MATCHERS[stat];
+  if (!matcher) return null;
+  const sensors = (entities || []).filter((entity) => lower(entity?.entity_id).startsWith("sensor."));
+  for (const entity of sensors) {
+    const parsed = parseUnifiDeviceUniqueId(entity?.unique_id);
+    if (parsed?.feature && matcher.features?.has(parsed.feature)) return entity.entity_id;
+  }
+  for (const entity of sensors) {
+    if (isUnambiguousDeviceStatTranslationKey(entity, stat, matcher)) return entity.entity_id;
+  }
+  const deviceSensors = sensors.filter((entity) => !hasPortLevelStatSignal(entity));
+  for (const entity of deviceSensors) {
+    if (matcher.translationKeys.has(lower(entity?.translation_key))) return entity.entity_id;
+  }
+  for (const entity of deviceSensors) {
+    const tk = canonicalStatText(entity?.translation_key);
+    if (tk && statTextIncludes(tk, matcher.textPatterns)) return entity.entity_id;
+  }
+  for (const entity of deviceSensors) {
+    if (statTextIncludes(getDeviceStatDisplayText(entity), matcher.textPatterns)) return entity.entity_id;
+  }
+  for (const entity of deviceSensors) {
+    if (matcher.fallbackId(lower(entity?.entity_id)) || statTextIncludes(getDeviceStatFallbackText(entity), matcher.textPatterns)) {
+      return entity.entity_id;
+    }
+  }
+  return null;
+}
+function getDeviceStatEntities(entities) {
+  let ledSwitchEntity = null;
+  let ledColorEntity = null;
+  for (const entity of entities || []) {
+    const id = lower(entity.entity_id);
+    const tk = lower(entity.translation_key || "");
+    if (!ledSwitchEntity && id.startsWith("light.") && (id.includes("led") || id.includes("indicator") || tk.includes("led") || tk.includes("indicator"))) {
+      ledSwitchEntity = entity.entity_id;
+    }
+    if (!id.startsWith("sensor.")) continue;
+    if (!ledColorEntity && (id.includes("led_color") || id.includes("led_colour") || id.includes("indicator_color") || id.includes("indicator_colour"))) {
+      ledColorEntity = entity.entity_id;
+    }
+  }
+  const statusEntity = findDeviceStatEntity(entities, "status");
+  return {
+    uptime_entity: findDeviceStatEntity(entities, "uptime"),
+    clients_entity: findDeviceStatEntity(entities, "clients"),
+    status_entity: statusEntity,
+    ap_status_entity: statusEntity,
+    led_switch_entity: ledSwitchEntity,
+    led_color_entity: ledColorEntity
+  };
+}
+function meshSignalCandidateScore(entity, hass = null) {
+  const id = lower(entity?.entity_id);
+  if (!id.startsWith("sensor.")) return -1;
+  const stateAttributes = hass?.states?.[entity.entity_id]?.attributes || {};
+  const text = lower([
+    entityText(entity),
+    stateAttributes.friendly_name,
+    stateAttributes.device_class,
+    stateAttributes.unit_of_measurement
+  ].filter(Boolean).join(" "));
+  const deviceClass = lower(stateAttributes.device_class || entity?.device_class || entity?.original_device_class);
+  const unit = lower(stateAttributes.unit_of_measurement);
+  const hasSignalTerm = /(?:^|[^a-z])(rssi|signal|signalstarke|signalstaerke)(?:[^a-z]|$)/.test(text);
+  const hasMeshTerm = text.includes("mesh") || text.includes("wireless uplink") || text.includes("wireless_uplink");
+  const hasUplinkTerm = text.includes("uplink") || text.includes("backhaul");
+  const hasSignalClass = deviceClass === "signal_strength";
+  const hasSignalUnit = unit === "dbm" || unit === "db";
+  if (!hasSignalTerm && !hasSignalClass && !hasSignalUnit) return -1;
+  let score = 0;
+  if (hasMeshTerm) score += 60;
+  if (hasUplinkTerm) score += 35;
+  if (hasSignalTerm) score += 25;
+  if (hasSignalClass) score += 20;
+  if (hasSignalUnit) score += 15;
+  if (id.includes("mesh")) score += 15;
+  if (id.includes("uplink") || id.includes("backhaul")) score += 10;
+  return score;
+}
+function getMeshSignalEntity(entities, hass = null) {
+  const candidates = (entities || []).map((entity, index) => ({
+    entity,
+    index,
+    score: meshSignalCandidateScore(entity, hass)
+  })).filter((candidate) => candidate.score >= 0).sort((left, right) => {
+    const leftState = hass?.states?.[left.entity.entity_id]?.state;
+    const rightState = hass?.states?.[right.entity.entity_id]?.state;
+    const leftUsable = leftState != null && leftState !== "unknown" && leftState !== "unavailable";
+    const rightUsable = rightState != null && rightState !== "unknown" && rightState !== "unavailable";
+    return Number(rightUsable) - Number(leftUsable) || right.score - left.score || left.index - right.index;
+  });
+  return candidates[0]?.entity?.entity_id || null;
+}
+function safeEntityState(hass, entityId) {
+  if (!entityId) return null;
+  const raw = String(hass?.states?.[entityId]?.state ?? "").trim();
+  if (!raw || raw === "unknown" || raw === "unavailable" || raw === "none") return null;
+  return raw;
+}
+function readStateAttributes(hass, entityId) {
+  if (!entityId) return {};
+  const attrs = hass?.states?.[entityId]?.attributes;
+  return attrs && typeof attrs === "object" ? attrs : {};
+}
+function pickAttribute(attrs, keys = []) {
+  for (const key of keys) {
+    if (attrs[key] !== void 0 && attrs[key] !== null && String(attrs[key]).trim() !== "") {
+      return attrs[key];
+    }
+  }
+  return null;
+}
+function discoverApUplinkEntities(entities) {
+  const result = {
+    uplink_mac_entity: null,
+    mesh_peer_mac_entity: null,
+    remote_port_entity: null,
+    uplink_type_entity: null
+  };
+  for (const entity of entities || []) {
+    const id = lower(entity.entity_id);
+    if (!id.startsWith("sensor.")) continue;
+    const translationKey = lower(entity.translation_key || "");
+    const displayText = lower([entity.original_name, entity.name].filter(Boolean).join(" "));
+    const fallbackText = lower([entity.entity_id, entity.original_name, entity.name].filter(Boolean).join(" "));
+    if (!result.uplink_mac_entity && translationKey === "device_uplink_mac") {
+      result.uplink_mac_entity = entity.entity_id;
+      continue;
+    }
+    if (!result.remote_port_entity && (translationKey === "device_uplink_remote_port" || translationKey === "uplink_remote_port")) {
+      result.remote_port_entity = entity.entity_id;
+      continue;
+    }
+    if (!result.uplink_type_entity && (translationKey === "device_uplink_type" || translationKey === "uplink_type")) {
+      result.uplink_type_entity = entity.entity_id;
+      continue;
+    }
+    if (!result.mesh_peer_mac_entity && (translationKey === "device_mesh_peer_mac" || translationKey === "mesh_peer_mac")) {
+      result.mesh_peer_mac_entity = entity.entity_id;
+      continue;
+    }
+    const hasUplinkSignal = translationKey.includes("uplink") || displayText.includes("uplink") || displayText.includes("mesh peer");
+    if (!hasUplinkSignal) continue;
+    if (!result.mesh_peer_mac_entity && (translationKey.includes("mesh_peer_mac") || displayText.includes("mesh peer") && displayText.includes("mac") || fallbackText.includes("meshv3") && fallbackText.includes("peer") && fallbackText.includes("mac"))) {
+      result.mesh_peer_mac_entity = entity.entity_id;
+      continue;
+    }
+    if (!result.uplink_mac_entity && (translationKey.includes("uplink") && translationKey.includes("mac") || displayText.includes("uplink") && displayText.includes("mac") || fallbackText.includes("_uplink_mac"))) {
+      result.uplink_mac_entity = entity.entity_id;
+      continue;
+    }
+    if (!result.remote_port_entity && (translationKey.includes("uplink") && translationKey.includes("port") || displayText.includes("uplink") && displayText.includes("port") || fallbackText.includes("_uplink_remote_port"))) {
+      result.remote_port_entity = entity.entity_id;
+      continue;
+    }
+    if (!result.uplink_type_entity && (translationKey.includes("uplink") && (translationKey.includes("type") || translationKey.includes("source")) || displayText.includes("uplink") && (displayText.includes("type") || displayText.includes("source")))) {
+      result.uplink_type_entity = entity.entity_id;
+    }
+  }
+  return result;
+}
+function resolveAccessPointUplink(hass, entities, allDevices) {
+  const discovered = discoverApUplinkEntities(entities);
+  const uplinkAttrs = readStateAttributes(hass, discovered.uplink_mac_entity);
+  const uplinkMacRaw = safeEntityState(hass, discovered.uplink_mac_entity);
+  const meshPeerMacRaw = safeEntityState(hass, discovered.mesh_peer_mac_entity);
+  const remotePortRaw = safeEntityState(hass, discovered.remote_port_entity) || pickAttribute(uplinkAttrs, [
+    "uplink_remote_port",
+    "remote_port",
+    "port",
+    "uplink_port",
+    "port_number",
+    "remote_port_number",
+    "uplink_port_number",
+    "uplink_port_id"
+  ]);
+  const uplinkTypeRaw = lower(
+    safeEntityState(hass, discovered.uplink_type_entity) || pickAttribute(uplinkAttrs, [
+      "uplink_type",
+      "type",
+      "uplink_source",
+      "connection_type",
+      "media"
+    ])
+  );
+  const uplinkMac = extractFirstMac(uplinkMacRaw);
+  const meshPeerMac = extractFirstMac(meshPeerMacRaw);
+  const viaMac = meshPeerMac || uplinkMac;
+  const remotePortNormalized = normalize(remotePortRaw);
+  const remotePortMatch = remotePortNormalized.match(/\d+/);
+  const remotePort = remotePortMatch ? remotePortMatch[0] : remotePortNormalized;
+  const viaDevice = findDeviceByMac(allDevices, viaMac);
+  const viaDeviceName = viaDevice ? normalize(viaDevice.name_by_user) || normalize(viaDevice.name) || normalize(viaDevice.model) : null;
+  const meshByType = uplinkTypeRaw.includes("mesh") || uplinkTypeRaw.includes("wireless") || uplinkTypeRaw.includes("wifi") || uplinkTypeRaw.includes("wlan") || uplinkAttrs.is_uplink_wireless === true;
+  const wiredByType = uplinkTypeRaw.includes("wired") || uplinkTypeRaw.includes("ethernet") || uplinkTypeRaw.includes("lan") || uplinkAttrs.is_uplink_wireless === false;
+  const resolvedDeviceType = viaDevice ? getDeviceType(viaDevice, []) : null;
+  const meshSignals = meshPeerMac || meshByType || uplinkTypeRaw.includes("wireless_uplink");
+  const wiredSignals = remotePort || wiredByType || resolvedDeviceType === "switch" || resolvedDeviceType === "gateway";
+  const kind = wiredSignals ? "wired" : meshSignals ? "mesh" : "unknown";
+  if (!viaMac && !remotePort && !uplinkTypeRaw) return null;
+  return {
+    kind,
+    via_device_id: viaDevice?.id || null,
+    via_device_name: viaDeviceName || null,
+    via_mac: viaMac || null,
+    remote_port: remotePort || null
+  };
+}
+function getDeviceRebootEntity(entities) {
+  for (const entity of entities || []) {
+    const id = lower(entity.entity_id);
+    const tk = lower(entity.translation_key || "");
+    if (!id.startsWith("button.")) continue;
+    const deviceInfo = parseUnifiDeviceUniqueId(entity.unique_id);
+    if (deviceInfo?.feature === "restart") return entity.entity_id;
+    if (id.includes("reboot") || id.includes("restart") || tk.includes("reboot") || tk.includes("restart")) {
+      return entity.entity_id;
+    }
+  }
+  return null;
+}
+async function getUnifiDevices(hass, cardConfig = null) {
+  if (cardConfig?.fake_device === true) return getFakeDevices();
+  const { devices, entitiesByDevice, allEntitiesByDevice, configEntries } = await getAllData(hass);
+  const unifiEntryIds = extractUnifiEntryIds(configEntries);
+  const results = [];
+  for (const device of devices || []) {
+    const entities = allEntitiesByDevice?.get(device.id) || entitiesByDevice.get(device.id) || [];
+    if (!isUnifiDevice(device, unifiEntryIds, entities)) continue;
+    const identity = buildNormalizedDeviceIdentity(device);
+    const capabilities = buildDeviceCapabilities(entities, identity);
+    const type = classifyDeviceType(identity, capabilities, entities, device);
+    if (type !== "switch" && type !== "gateway" && type !== "access_point") continue;
+    results.push({
+      id: device.id,
+      name: normalize(device.name_by_user) || normalize(device.name) || normalize(device.model),
+      label: buildDeviceLabel(device, type),
+      model: normalize(device.model),
+      type
+    });
+  }
+  return results.sort(
+    (a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" })
+  );
+}
+function classifyRelevantEntityType(entity) {
+  const headerTelemetryType = classifyHeaderTelemetryWarningType(entity);
+  if (headerTelemetryType) return headerTelemetryType;
+  const id = lower(entity.entity_id);
+  const eid = entity.entity_id || "";
+  const tk = lower(entity.translation_key || "");
+  const dc = lower(entity.device_class || "");
+  const odc = lower(entity.original_device_class || "");
+  if (eid.startsWith("button.") && (id.includes("power_cycle") || tk === "power_cycle")) {
+    return "power_cycle";
+  }
+  if (eid.startsWith("switch.") && hasIndexedPortId(id) && id.endsWith("_poe")) {
+    return "poe_switch";
+  }
+  if (eid.startsWith("switch.") && hasIndexedPortId(id)) {
+    return "port_switch";
+  }
+  if (eid.startsWith("sensor.") && (id.includes("_poe_power") || id.includes("_poe") && id.includes("power") || id.includes("power_draw") || id.includes("power_consumption") || id.includes("consumption") || tk === "poe_power" || tk === "port_poe_power" || tk === "poe_power_consumption" || dc === "power" || odc === "power")) {
+    return "poe_power";
+  }
+  if (eid.startsWith("sensor.") && (id.endsWith("_rx") || id.endsWith("_tx") || id.includes("_rx_") || id.includes("_tx_") || id.includes("throughput") || id.includes("bandwidth") || id.includes("download") || id.includes("upload") || tk === "port_bandwidth_rx" || tk === "port_bandwidth_tx" || tk === "rx" || tk === "tx")) {
+    return "rx_tx";
+  }
+  if (eid.startsWith("sensor.") && (id.includes("link_speed") || id.includes("ethernet_speed") || id.includes("negotiated_speed") || id.endsWith("_speed") || tk === "port_link_speed" || tk === "link_speed")) {
+    return "link_speed";
+  }
+  if (eid.startsWith("binary_sensor.") && (id.includes("_port_") || id.includes("_link") || tk === "port_link")) {
+    return "link";
+  }
+  return null;
+}
+async function getRelevantEntityWarningsForDevice(hass, deviceId) {
+  const cached = _registryCache.get(hass)?.data;
+  const [devices, allEntities] = await Promise.all([
+    safeCallWS(hass, { type: "config/device_registry/list" }, cached?.devices || []),
+    safeCallWS(
+      hass,
+      { type: "config/entity_registry/list" },
+      flattenEntitiesByDevice(cached?.allEntitiesByDevice || cached?.entitiesByDevice)
+    )
+  ]);
+  const device = (devices || []).find((d) => d.id === deviceId);
+  if (!device) return null;
+  const allForDevice = (allEntities || []).filter((e) => e.device_id === deviceId);
+  const disabled = {
+    port_switch: [],
+    poe_switch: [],
+    poe_power: [],
+    link_speed: [],
+    rx_tx: [],
+    power_cycle: [],
+    link: [],
+    header_cpu: [],
+    header_memory: [],
+    header_cpu_temperature: [],
+    header_temperature: []
+  };
+  const hidden = {
+    port_switch: [],
+    poe_switch: [],
+    poe_power: [],
+    link_speed: [],
+    rx_tx: [],
+    power_cycle: [],
+    link: [],
+    header_cpu: [],
+    header_memory: [],
+    header_cpu_temperature: [],
+    header_temperature: []
+  };
+  for (const entity of allForDevice) {
+    const type = classifyRelevantEntityType(entity);
+    if (!type) continue;
+    if (entity.disabled_by) disabled[type]?.push(entity.entity_id);
+    else if (entity.hidden_by) hidden[type]?.push(entity.entity_id);
+  }
+  const disabledCount = Object.values(disabled).flat().length;
+  const hiddenCount = Object.values(hidden).flat().length;
+  if (disabledCount === 0 && hiddenCount === 0) return null;
+  return { disabled, hidden, disabledCount, hiddenCount };
+}
+function extractPortNumber(entity) {
+  const parsedUid = parseUnifiPortUniqueId(entity?.unique_id);
+  if (parsedUid?.port) return parsedUid.port;
+  const uid = normalize(entity.unique_id);
+  const uidMatch = findIndexedPortIdMatch(uid) || uid.match(/-(\d+)-[a-z]/i);
+  if (uidMatch) return parseInt(uidMatch[1], 10);
+  const eid = lower(entity.entity_id);
+  const eidMatch = findIndexedPortIdMatch(eid);
+  if (eidMatch) return parseInt(eidMatch[1], 10);
+  const originalNameMatch = (entity.original_name || "").match(/\bport\s+(\d+)\b/i);
+  if (originalNameMatch) return parseInt(originalNameMatch[1], 10);
+  const nameMatch = (entity.name || "").match(/\bport\s+(\d+)\b/i);
+  if (nameMatch) return parseInt(nameMatch[1], 10);
+  return null;
+}
+function classifyPortEntity(entity, isSpecial = false) {
+  const id = lower(entity.entity_id);
+  const eid = entity.entity_id || "";
+  const hasPortLikeId = hasIndexedPortId(id);
+  const portInfo = parseUnifiPortUniqueId(entity.unique_id);
+  const tk = lower(entity.translation_key || "");
+  const dc = lower(entity.device_class || "");
+  const odc = lower(entity.original_device_class || "");
+  if (eid.startsWith("button.") && portInfo?.feature === "power_cycle") {
+    return "power_cycle_entity";
+  }
+  if (eid.startsWith("switch.") && portInfo?.feature === "poe_control") {
+    return "poe_switch_entity";
+  }
+  if (eid.startsWith("switch.") && portInfo?.feature === "port_control") {
+    return "port_switch_entity";
+  }
+  if (eid.startsWith("sensor.") && portInfo?.feature === "port_rx") return "rx_entity";
+  if (eid.startsWith("sensor.") && portInfo?.feature === "port_tx") return "tx_entity";
+  if (eid.startsWith("sensor.") && portInfo?.feature === "link_speed") return "speed_entity";
+  if (eid.startsWith("sensor.") && portInfo?.feature === "poe_power") return "poe_power_entity";
+  if (eid.startsWith("button.") && (id.includes("power_cycle") || tk === "power_cycle" || id.includes("_restart") || id.includes("_reboot"))) {
+    return "power_cycle_entity";
+  }
+  if (eid.startsWith("sensor.")) {
+    if (tk === "port_bandwidth_rx" || tk === "rx") return "rx_entity";
+    if (tk === "port_bandwidth_tx" || tk === "tx") return "tx_entity";
+    if (tk === "port_link_speed" || tk === "link_speed") return "speed_entity";
+    if (tk === "poe_power" || tk === "port_poe_power" || tk === "poe_power_consumption") {
+      return "poe_power_entity";
+    }
+  }
+  if (eid.startsWith("switch.") && hasPortLikeId && id.endsWith("_poe")) {
+    return "poe_switch_entity";
+  }
+  if (eid.startsWith("switch.") && (hasPortLikeId || isSpecial)) {
+    return "port_switch_entity";
+  }
+  if (eid.startsWith("binary_sensor.")) {
+    if (hasPortLikeId) return "link_entity";
+    if (isSpecial && (id.includes("_wan") || id.includes("_sfp") || id.includes("_uplink") || id.includes("_connected") || id.includes("_link") || tk === "port_link")) {
+      return "link_entity";
+    }
+  }
+  if (eid.startsWith("sensor.")) {
+    if (hasPortLikeId) {
+      if (id.endsWith("_rx") || id.includes("_rx_") || id.includes("download") || tk === "port_bandwidth_rx" || tk === "rx") {
+        return "rx_entity";
+      }
+      if (id.endsWith("_tx") || id.includes("_tx_") || id.includes("upload") || tk === "port_bandwidth_tx" || tk === "tx") {
+        return "tx_entity";
+      }
+      if (id.includes("link_speed") || id.includes("ethernet_speed") || id.includes("negotiated_speed") || id.endsWith("_speed") || tk === "port_link_speed" || tk === "link_speed") {
+        return "speed_entity";
+      }
+      if (id.includes("_poe_power") || id.includes("_poe") && id.includes("power") || id.includes("power_draw") || id.includes("power_consumption") || id.includes("consumption") || tk === "poe_power" || tk === "port_poe_power" || tk === "poe_power_consumption" || dc === "power" || odc === "power") {
+        return "poe_power_entity";
+      }
+    }
+    if (isSpecial && (id.includes("_wan") || id.includes("_sfp") || id.includes("_uplink"))) {
+      if (id.includes("download") || id.includes("_rx") || tk === "port_bandwidth_rx" || tk === "rx") {
+        return "rx_entity";
+      }
+      if (id.includes("upload") || id.includes("_tx") || tk === "port_bandwidth_tx" || tk === "tx") {
+        return "tx_entity";
+      }
+      if (id.includes("link_speed") || id.includes("ethernet_speed") || id.includes("negotiated_speed") || id.endsWith("_speed") || tk === "port_link_speed" || tk === "link_speed") {
+        return "speed_entity";
+      }
+      if (id.includes("_poe_power") || id.includes("_poe") && id.includes("power") || id.includes("power_draw") || id.includes("power_consumption") || id.includes("consumption") || tk === "poe_power" || tk === "port_poe_power" || tk === "poe_power_consumption" || dc === "power" || odc === "power") {
+        return "poe_power_entity";
+      }
+    }
+  }
+  return null;
+}
+function ensurePort(map, port) {
+  if (!map.has(port)) {
+    map.set(port, {
+      key: `port-${port}`,
+      port,
+      label: String(port),
+      kind: "numbered",
+      link_entity: null,
+      speed_entity: null,
+      poe_switch_entity: null,
+      poe_power_entity: null,
+      port_switch_entity: null,
+      power_cycle_entity: null,
+      rx_entity: null,
+      tx_entity: null,
+      port_label: null,
+      raw_entities: []
+    });
+  }
+  return map.get(port);
+}
+function detectSpecialPortKey(entity) {
+  const id = lower(entity.entity_id);
+  const tk = entity.translation_key || "";
+  const text = lower([entity.entity_id, entity.translation_key, entity.original_name, entity.name].filter(Boolean).join(" "));
+  if (id.includes("_wan2") || id.endsWith("wan2") || tk.includes("wan2")) {
+    return { key: "wan2", label: "WAN 2" };
+  }
+  if (id.includes("_wan_") || id.endsWith("_wan") || tk.includes("wan")) {
+    return { key: "wan", label: "WAN" };
+  }
+  const sfp28Match = id.match(/_sfp28[_+]?(\d+)[_-]/) || tk.match(/sfp28[_+]?(\d+)/);
+  if (sfp28Match) return { key: `sfp28_${sfp28Match[1]}`, label: `SFP28 ${sfp28Match[1]}` };
+  if (id.includes("_sfp28") || tk.includes("sfp28")) return { key: "sfp28_1", label: "SFP28" };
+  const looksSfpPlus = text.includes("sfp+") || text.includes("sfp plus") || text.includes("sfpplus") || tk.includes("sfp_plus") || id.includes("sfpplus");
+  const sfpMatch = id.match(/_sfp[_+]?(\d+)[_-]/) || tk.match(/sfp[_+]?(\d+)/);
+  if (sfpMatch) {
+    return { key: `sfp_${sfpMatch[1]}`, label: `${looksSfpPlus ? "SFP+" : "SFP"} ${sfpMatch[1]}` };
+  }
+  if (id.includes("_sfp") || id.includes("sfp+")) return { key: "sfp_1", label: looksSfpPlus ? "SFP+" : "SFP" };
+  if (id.includes("_uplink") || tk.includes("uplink")) {
+    return { key: "uplink", label: "Uplink" };
+  }
+  return null;
+}
+function ensureSpecialPort(map, key, label) {
+  if (!map.has(key)) {
+    map.set(key, {
+      key,
+      physical_key: key,
+      port: null,
+      label,
+      kind: "special",
+      link_entity: null,
+      speed_entity: null,
+      poe_switch_entity: null,
+      poe_power_entity: null,
+      port_switch_entity: null,
+      power_cycle_entity: null,
+      rx_entity: null,
+      tx_entity: null,
+      raw_entities: [],
+      port_label: null
+    });
+  }
+  return map.get(key);
+}
+function extractPortLabel(entity) {
+  const isLabelSource = entity.entity_id?.startsWith("button.") && lower(entity.entity_id).includes("power_cycle") || entity.entity_id?.startsWith("sensor.") && lower(entity.entity_id).includes("_link_speed") || entity.entity_id?.startsWith("sensor.") && lower(entity.entity_id).includes("_poe_power");
+  if (!isLabelSource) return null;
+  const translatedPortName = normalize(entity.translation_placeholders?.port_name || "");
+  if (translatedPortName) return translatedPortName;
+  const name = normalize(entity.original_name || entity.name || "");
+  if (!name) return null;
+  let stripped = name;
+  const metricSuffixes = [
+    // English and the languages supported by the card. These are HA entity
+    // metric labels, not card UI translations, and must never become part of
+    // the discovered physical port name.
+    / power cycle$/i,
+    / aus- und wieder einschalten$/i,
+    / stroomcyclus$/i,
+    / cycle d['’]alimentation$/i,
+    / ciclo de energía$/i,
+    / spegnimento e riaccensione$/i,
+    / strömcykel$/i,
+    / strømcyklus$/i,
+    / strømsyklus$/i,
+    / virrankatkaisu$/i,
+    / cykl zasilania$/i,
+    / restart napájení$/i,
+    / link speed$/i,
+    / poe power$/i,
+    / verbindungsgeschwindigkeit$/i,
+    / poe[- ]leistung$/i,
+    / verbindingssnelheid$/i,
+    / poe[- ]vermogen$/i,
+    / vitesse (?:de (?:la )?)?(?:liaison|connexion)$/i,
+    / puissance poe$/i,
+    / velocidad (?:de|del) (?:enlace|vínculo)$/i,
+    / potencia poe$/i,
+    / velocità (?:del )?(?:collegamento|link)$/i,
+    / potenza poe$/i,
+    / länkhastighet$/i,
+    / poe[- ]effekt$/i,
+    / linkhastighed$/i,
+    / poe[- ]strøm$/i,
+    / linkhastighet$/i,
+    / linkkinopeus$/i,
+    / poe[- ]teho$/i,
+    / prędkość (?:łącza|połączenia)$/i,
+    / moc poe$/i,
+    / rychlost (?:linky|připojení)$/i,
+    / napájení poe$/i
+  ];
+  for (const suffix of metricSuffixes) {
+    const c = name.replace(suffix, "").trim();
+    if (c.length < name.length) {
+      stripped = c;
+      break;
+    }
+  }
+  if (!stripped || /^(rx|tx|poe|link|uplink|downlink|sfp|wan|lan)$/i.test(stripped)) {
+    return null;
+  }
+  return stripped;
+}
+function discoverPorts(entities) {
+  const ports = /* @__PURE__ */ new Map();
+  for (const entity of entities || []) {
+    const port = extractPortNumber(entity);
+    if (!port) continue;
+    const row = ensurePort(ports, port);
+    row.raw_entities.push(entity.entity_id);
+    const type = classifyPortEntity(entity);
+    if (type && !row[type]) row[type] = entity.entity_id;
+    if (!row.port_label) {
+      const label = extractPortLabel(entity);
+      if (label) row.port_label = label;
+    }
+  }
+  return Array.from(ports.values()).sort((a, b) => a.port - b.port);
+}
+function discoverSpecialPorts(entities) {
+  const specials = /* @__PURE__ */ new Map();
+  for (const entity of entities || []) {
+    if (extractPortNumber(entity)) continue;
+    const special = detectSpecialPortKey(entity);
+    if (!special) continue;
+    const row = ensureSpecialPort(specials, special.key, special.label);
+    row.raw_entities.push(entity.entity_id);
+    const type = classifyPortEntity(entity, true);
+    if (type && !row[type]) row[type] = entity.entity_id;
+  }
+  return Array.from(specials.values());
+}
+function portHasPoe(portNumber, layout) {
+  const r = layout?.poePortRange;
+  if (!r) return false;
+  return portNumber >= r[0] && portNumber <= r[1];
+}
+function stripPoeEntities(port) {
+  return {
+    ...port,
+    poe_switch_entity: null,
+    poe_power_entity: null,
+    power_cycle_entity: null
+  };
+}
+function mergePortsWithLayout(layout, discoveredPorts) {
+  const byPort = new Map(discoveredPorts.map((p) => [p.port, p]));
+  const layoutPorts = (layout?.rows || []).flat();
+  const specialPortNumbers = new Set(
+    (layout?.specialSlots || []).map((s) => s.port).filter((p) => p != null)
+  );
+  const merged = [];
+  const hasKnownPoeRange = Array.isArray(layout?.poePortRange) && layout.poePortRange.length === 2 && Number.isInteger(layout.poePortRange[0]) && Number.isInteger(layout.poePortRange[1]);
+  for (const portNumber of layoutPorts) {
+    if (specialPortNumbers.has(portNumber)) continue;
+    const discovered = byPort.get(portNumber);
+    const hasPoe = portHasPoe(portNumber, layout);
+    const port = discovered || {
+      key: `port-${portNumber}`,
+      port: portNumber,
+      label: String(portNumber),
+      kind: "numbered",
+      link_entity: null,
+      speed_entity: null,
+      poe_switch_entity: null,
+      poe_power_entity: null,
+      port_switch_entity: null,
+      power_cycle_entity: null,
+      rx_entity: null,
+      tx_entity: null,
+      raw_entities: [],
+      port_label: null
+    };
+    merged.push(hasKnownPoeRange && !hasPoe ? stripPoeEntities(port) : port);
+  }
+  for (const port of discoveredPorts) {
+    if (!layout?.preserveDeclaredRows && !layoutPorts.includes(port.port) && !specialPortNumbers.has(port.port)) {
+      merged.push(port);
+    }
+  }
+  return merged.sort((a, b) => (a.port ?? 999) - (b.port ?? 999));
+}
+function mergeSpecialsWithLayout(layout, discoveredSpecials, discoveredPorts = []) {
+  const byKey = new Map(discoveredSpecials.map((s) => [s.key, s]));
+  const byPort = new Map(discoveredPorts.map((p) => [p.port, p]));
+  const layoutSpecials = layout?.specialSlots || [];
+  const merged = layoutSpecials.map((slot) => {
+    const discoveryPort = slot.apiPort ?? slot.port;
+    if (discoveryPort != null) {
+      const portData = byPort.get(discoveryPort);
+      if (portData) {
+        return {
+          ...portData,
+          key: slot.key,
+          physical_key: slot.key,
+          label: slot.label,
+          media: slot.media ?? portData.media,
+          row: slot.row,
+          kind: "special",
+          port: slot.port ?? portData.port
+        };
+      }
+    }
+    const keyData = byKey.get(slot.key);
+    if (keyData) {
+      return {
+        ...keyData,
+        key: slot.key,
+        physical_key: slot.key,
+        label: slot.label,
+        media: slot.media ?? keyData.media,
+        row: slot.row,
+        kind: "special",
+        port: slot.port ?? keyData.port ?? null
+      };
+    }
+    return {
+      key: slot.key,
+      physical_key: slot.key,
+      port: slot.port ?? null,
+      label: slot.label,
+      media: slot.media,
+      row: slot.row,
+      kind: "special",
+      link_entity: null,
+      speed_entity: null,
+      poe_switch_entity: null,
+      poe_power_entity: null,
+      port_switch_entity: null,
+      power_cycle_entity: null,
+      rx_entity: null,
+      tx_entity: null,
+      raw_entities: [],
+      port_label: null
+    };
+  });
+  return merged;
+}
+function cloneSlot(slot) {
+  return {
+    ...slot,
+    raw_entities: Array.isArray(slot?.raw_entities) ? [...slot.raw_entities] : []
+  };
+}
+function emptyNumberedPort(portNumber) {
+  return {
+    key: `port-${portNumber}`,
+    port: portNumber,
+    label: String(portNumber),
+    kind: "numbered",
+    link_entity: null,
+    speed_entity: null,
+    poe_switch_entity: null,
+    poe_power_entity: null,
+    port_switch_entity: null,
+    power_cycle_entity: null,
+    rx_entity: null,
+    tx_entity: null,
+    raw_entities: [],
+    port_label: null
+  };
+}
+function emptySpecialPort(key, label, port = null) {
+  return {
+    key,
+    physical_key: key,
+    port,
+    label,
+    kind: "special",
+    link_entity: null,
+    speed_entity: null,
+    poe_switch_entity: null,
+    poe_power_entity: null,
+    port_switch_entity: null,
+    power_cycle_entity: null,
+    rx_entity: null,
+    tx_entity: null,
+    raw_entities: [],
+    port_label: null
+  };
+}
+function resolveGatewaySelection(selection, roleKey, layout, specialsByKey) {
+  const normalized = String(selection || "auto");
+  if (normalized === "none") return null;
+  if (!selection || normalized === "auto") {
+    const def = (layout?.specialSlots || []).find((s) => s.key === roleKey);
+    if (!def) return null;
+    if (def.port != null) {
+      return {
+        type: "port",
+        port: def.port,
+        key: def.key,
+        label: def.label
+      };
+    }
+    return {
+      type: "special",
+      key: def.key,
+      label: def.label
+    };
+  }
+  if (normalized.startsWith("port_")) {
+    const port = parseInt(normalized.replace(/^port_/, ""), 10);
+    if (!Number.isInteger(port)) return null;
+    return {
+      type: "port",
+      port,
+      key: roleKey,
+      label: roleKey === "wan2" ? "WAN 2" : "WAN"
+    };
+  }
+  const specialLayout = (layout?.specialSlots || []).find((s) => s.key === normalized);
+  if (specialLayout?.port != null) {
+    return {
+      type: "port",
+      port: specialLayout.port,
+      key: specialLayout.key,
+      label: specialLayout.label
+    };
+  }
+  const specialData = specialsByKey.get(normalized);
+  if (specialData) {
+    if (specialData.port != null) {
+      return {
+        type: "port",
+        port: specialData.port,
+        key: normalized,
+        label: specialData.label
+      };
+    }
+    return {
+      type: "special",
+      key: normalized,
+      label: specialData.label
+    };
+  }
+  return null;
+}
+function makeSpecialFromPhysical(roleKey, physical) {
+  return {
+    ...cloneSlot(physical),
+    key: roleKey,
+    physical_key: physical?.physical_key || physical?.key || roleKey,
+    label: roleKey === "wan2" ? "WAN 2" : "WAN",
+    kind: "special"
+  };
+}
+function makeNumberedFromPhysical(portNumber, physical, layout) {
+  const hasPoe = portHasPoe(portNumber, layout);
+  const base = physical ? cloneSlot(physical) : emptyNumberedPort(portNumber);
+  const numbered = {
+    ...base,
+    key: `port-${portNumber}`,
+    port: portNumber,
+    label: String(portNumber),
+    kind: "numbered"
+  };
+  return hasPoe ? numbered : stripPoeEntities(numbered);
+}
+function applyGatewayPortOverrides(config, specials, numbered, layout) {
+  const wanPort = config?.wan_port;
+  const wan2Port = config?.wan2_port;
+  const normalizedWan = String(wanPort || "auto");
+  const normalizedWan2 = String(wan2Port || "auto");
+  if ((!wanPort || normalizedWan === "auto") && (!wan2Port || normalizedWan2 === "auto")) {
+    return { specials, numbered };
+  }
+  const originalSpecials = (specials || []).map(cloneSlot);
+  const originalNumbered = (numbered || []).map(cloneSlot);
+  const specialsByKey = new Map(originalSpecials.map((s) => [s.key, s]));
+  const physicalByPort = /* @__PURE__ */ new Map();
+  for (const slot of [...originalSpecials, ...originalNumbered]) {
+    if (Number.isInteger(slot?.port) && !physicalByPort.has(slot.port)) {
+      physicalByPort.set(slot.port, cloneSlot(slot));
+    }
+  }
+  const wanSel = resolveGatewaySelection(wanPort, "wan", layout, specialsByKey);
+  const wan2Sel = resolveGatewaySelection(wan2Port, "wan2", layout, specialsByKey);
+  const roleAssignments = /* @__PURE__ */ new Map();
+  if (wanSel) roleAssignments.set("wan", wanSel);
+  if (wan2Sel) {
+    const samePort = wanSel?.type === "port" && wan2Sel?.type === "port" && wanSel.port === wan2Sel.port;
+    const sameSpecial = wanSel?.type === "special" && wan2Sel?.type === "special" && wanSel.key === wan2Sel.key;
+    if (!samePort && !sameSpecial) {
+      roleAssignments.set("wan2", wan2Sel);
+    }
+  }
+  const assignedPorts = new Set(
+    Array.from(roleAssignments.values()).filter((s) => s?.type === "port").map((s) => s.port)
+  );
+  const assignedSpecialKeys = new Set(
+    Array.from(roleAssignments.values()).filter((s) => s?.type === "special").map((s) => s.key)
+  );
+  const newSpecials = [];
+  for (const roleKey of ["wan", "wan2"]) {
+    const sel = roleAssignments.get(roleKey);
+    if (!sel) continue;
+    if (sel.type === "port") {
+      const physicalByPortSlot = physicalByPort.get(sel.port);
+      const physicalByKeySlot = sel.key ? specialsByKey.get(sel.key) : null;
+      const physical = physicalByPortSlot || physicalByKeySlot || emptyNumberedPort(sel.port);
+      newSpecials.push(makeSpecialFromPhysical(roleKey, physical));
+    } else {
+      const specialData = specialsByKey.get(sel.key) || emptySpecialPort(roleKey, roleKey === "wan2" ? "WAN 2" : "WAN");
+      newSpecials.push({
+        ...cloneSlot(specialData),
+        key: roleKey,
+        physical_key: specialData?.physical_key || specialData?.key || roleKey,
+        label: roleKey === "wan2" ? "WAN 2" : "WAN",
+        kind: "special"
+      });
+    }
+  }
+  for (const slot of originalSpecials) {
+    if (slot.key === "wan" || slot.key === "wan2") continue;
+    if (Number.isInteger(slot.port) && assignedPorts.has(slot.port)) continue;
+    if (!Number.isInteger(slot.port) && assignedSpecialKeys.has(slot.key)) continue;
+    newSpecials.push(cloneSlot(slot));
+  }
+  const newNumbered = [];
+  for (const slot of originalNumbered) {
+    if (assignedPorts.has(slot.port)) continue;
+    newNumbered.push(makeNumberedFromPhysical(slot.port, slot, layout));
+  }
+  for (const slot of originalSpecials) {
+    if (!Number.isInteger(slot.port)) continue;
+    if (assignedPorts.has(slot.port)) continue;
+    if (slot.key === "wan" || slot.key === "wan2") {
+      newNumbered.push(makeNumberedFromPhysical(slot.port, slot, layout));
+    }
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const deduped = [];
+  for (const port of newNumbered.sort((a, b) => (a.port ?? 999) - (b.port ?? 999))) {
+    if (!Number.isInteger(port.port)) continue;
+    if (seen.has(port.port)) continue;
+    seen.add(port.port);
+    deduped.push(port);
+  }
+  return { specials: newSpecials, numbered: deduped };
+}
+var PORT_TRANSLATION_KEYS = /* @__PURE__ */ new Set([
+  "port_bandwidth_rx",
+  "port_bandwidth_tx",
+  "port_link_speed",
+  "poe",
+  "poe_power",
+  "poe_port_control"
+]);
+function filterPortsByLayout(discoveredPorts, layout) {
+  const layoutRows = (layout?.rows || []).flat();
+  const specialPorts = (layout?.specialSlots || []).map((slot) => slot?.port).filter((port) => Number.isInteger(port));
+  const allowed = /* @__PURE__ */ new Set([...layoutRows, ...specialPorts]);
+  if (!allowed.size) return discoveredPorts;
+  return discoveredPorts.filter((port) => allowed.has(port.port));
+}
+async function buildDeviceContext(hass, deviceId, cardConfig = null) {
+  const isFakeDevice = String(deviceId).startsWith("fake:");
+  if (cardConfig?.fake_device === true && !isFakeDevice) return null;
+  if (isFakeDevice) {
+    if (cardConfig?.fake_device !== true) return null;
+    const modelKey = String(deviceId).slice(5);
+    const model = MODEL_REGISTRY[modelKey];
+    if (!model) return null;
+    let layout2 = getDeviceLayout({ model: modelKey });
+    const configuredPortsPerRow2 = Number.parseInt(cardConfig?.ports_per_row, 10);
+    if (Number.isFinite(configuredPortsPerRow2) && configuredPortsPerRow2 > 0) {
+      layout2 = applyPortsPerRowOverride(layout2, configuredPortsPerRow2);
+    }
+    const device2 = {
+      id: deviceId,
+      name: model.displayModel,
+      model: model.displayModel,
+      manufacturer: "Ubiquiti"
+    };
+    return {
+      device: device2,
+      identity: buildNormalizedDeviceIdentity(device2),
+      capabilities: {},
+      entities: [],
+      type: model.kind,
+      layout: layout2,
+      specialPorts: mergeSpecialsWithLayout(layout2, [], []),
+      numberedPorts: mergePortsWithLayout(layout2, []),
+      name: model.displayModel,
+      model: model.displayModel,
+      manufacturer: "Ubiquiti",
+      firmware: "",
+      online_entity: null,
+      led_switch_entity: null,
+      led_color_entity: null,
+      uptime_entity: null,
+      clients_entity: null,
+      mesh_signal_entity: null,
+      ap_status_entity: null,
+      ap_uplink: null,
+      reboot_entity: null,
+      cpu_utilization_entity: null,
+      cpu_temperature_entity: null,
+      memory_utilization_entity: null,
+      temperature_entity: null,
+      fake_device: true
+    };
+  }
+  const { devices, entitiesByDevice, allEntitiesByDevice, configEntries } = await getAllData(hass);
+  const unifiEntryIds = extractUnifiEntryIds(configEntries);
+  const device = devices.find((d) => d.id === deviceId);
+  if (!device) return null;
+  const allEntities = allEntitiesByDevice?.get(deviceId) || entitiesByDevice.get(deviceId) || [];
+  let entities = entitiesByDevice.get(deviceId) || [];
+  if (!isUnifiDevice(device, unifiEntryIds, allEntities)) return null;
+  const identity = buildNormalizedDeviceIdentity(device);
+  const capabilities = buildDeviceCapabilities(allEntities, identity);
+  const type = classifyDeviceType(identity, capabilities, allEntities, device);
+  if (type !== "switch" && type !== "gateway" && type !== "access_point") return null;
+  const needsUID = entities.filter(
+    (e) => !e.unique_id && e.translation_key && PORT_TRANSLATION_KEYS.has(e.translation_key) && (!hasIndexedPortId(e.entity_id) || /(?:^|[_-])sfp[_+]?\d+(?:[_-]|$)/i.test(lower(e.entity_id))) && !/\bport\s+\d+\b/i.test(e.original_name || "")
+  );
+  if (needsUID.length > 0) {
+    const details = await Promise.all(
+      needsUID.map(
+        (e) => safeCallWS(
+          hass,
+          { type: "config/entity_registry/get", entity_id: e.entity_id },
+          null
+        )
+      )
+    );
+    const uidMap = new Map(
+      details.filter(Boolean).filter((d) => d.unique_id).map((d) => [d.entity_id, d.unique_id])
+    );
+    if (uidMap.size > 0) {
+      entities = entities.map(
+        (e) => uidMap.has(e.entity_id) ? { ...e, unique_id: uidMap.get(e.entity_id) } : e
+      );
+    }
+  }
+  const discoveredPortsRaw = discoverPorts(entities);
+  let layout = getDeviceLayout(device, discoveredPortsRaw);
+  const configuredPortsPerRow = Number.parseInt(cardConfig?.ports_per_row, 10);
+  const hasConfiguredPortsPerRow = Number.isFinite(configuredPortsPerRow) && configuredPortsPerRow > 0;
+  if (hasConfiguredPortsPerRow) {
+    layout = applyPortsPerRowOverride(layout, configuredPortsPerRow);
+  } else if (type === "switch" && !(layout?.rows?.length > 1)) {
+    layout = applyPortsPerRowOverride(layout, 8);
+  }
+  if (layout?.supportsIntegratedPorts) {
+    const discoveredPortNumbers = discoveredPortsRaw.map((port) => port?.port).filter((port) => Number.isInteger(port) && port > 0).sort((a, b) => a - b);
+    if (discoveredPortNumbers.length > 0) {
+      const portsPerRow = hasConfiguredPortsPerRow ? configuredPortsPerRow : discoveredPortNumbers.length;
+      const rows = [];
+      for (let i = 0; i < discoveredPortNumbers.length; i += portsPerRow) {
+        rows.push(discoveredPortNumbers.slice(i, i + portsPerRow));
+      }
+      layout = {
+        ...layout,
+        rows,
+        portCount: Math.max(...discoveredPortNumbers)
+      };
+    }
+  }
+  const numberedPorts = filterPortsByLayout(discoveredPortsRaw, layout);
+  const specialPorts = discoverSpecialPorts(entities);
+  const telemetryEntities = allEntities.filter((entity) => !entity?.disabled_by);
+  const telemetry = getDeviceTelemetry(telemetryEntities.length > 0 ? telemetryEntities : entities, hass);
+  const deviceStats = getDeviceStatEntities(entities);
+  const meshSignalEntity = getMeshSignalEntity(telemetryEntities.length > 0 ? telemetryEntities : entities, hass);
+  const apUplink = type === "access_point" ? resolveAccessPointUplink(hass, entities, devices) : null;
+  return {
+    device,
+    identity,
+    capabilities,
+    entities,
+    telemetry_entities: telemetryEntities.length > 0 ? telemetryEntities : entities,
+    type,
+    layout,
+    specialPorts,
+    name: normalize(device.name_by_user) || normalize(device.name) || normalize(device.model),
+    model: normalize(device.model),
+    manufacturer: normalize(device.manufacturer),
+    firmware: extractFirmware(device),
+    online_entity: getDeviceOnlineEntity(entities),
+    ...deviceStats,
+    mesh_signal_entity: meshSignalEntity,
+    ap_uplink: apUplink,
+    reboot_entity: getDeviceRebootEntity(entities),
+    ...telemetry,
+    numberedPorts
+  };
+}
+async function getDeviceContext(hass, deviceId, cardConfig = null) {
+  if (!hass || !deviceId) return null;
+  const cacheKey = getDeviceContextCacheKey(deviceId, cardConfig);
+  const now = Date.now();
+  const cacheStore = getContextCacheStore(_deviceContextCache, hass);
+  const cached = cacheStore.get(cacheKey);
+  if (cached && now - cached.ts < DEVICE_CONTEXT_CACHE_TTL) {
+    return cached.data;
+  }
+  const inflightStore = getContextCacheStore(_deviceContextInflight, hass);
+  if (inflightStore.has(cacheKey)) {
+    return inflightStore.get(cacheKey);
+  }
+  const promise = buildDeviceContext(hass, deviceId, cardConfig);
+  inflightStore.set(cacheKey, promise);
+  try {
+    const data = await promise;
+    if (data) {
+      cacheStore.set(cacheKey, { ts: Date.now(), data });
+    }
+    return data;
+  } finally {
+    inflightStore.delete(cacheKey);
+  }
+}
+function stateObj(hass, entityId) {
+  if (!entityId || !hass?.states) return null;
+  return hass.states[entityId] ?? null;
+}
+function stateValue(hass, entityId) {
+  return stateObj(hass, entityId)?.state ?? null;
+}
+function parseLinkSpeedMbit(hass, entityId) {
+  const obj = stateObj(hass, entityId);
+  const raw = obj?.state;
+  if (raw == null || raw === "unavailable" || raw === "unknown") return null;
+  const n = parseFloat(String(raw).replace(",", "."));
+  if (!Number.isFinite(n)) return null;
+  const unit = String(obj?.attributes?.unit_of_measurement || "").toLowerCase();
+  if (unit.includes("gb")) return n * 1e3;
+  if (unit.includes("kb")) return n / 1e3;
+  return n;
+}
+function isOn(hass, entityId) {
+  const s = stateValue(hass, entityId);
+  return s === "on" || s === "true" || s === "connected" || s === "up" || s === "active";
+}
+function formatState(hass, entityId) {
+  const obj = stateObj(hass, entityId);
+  if (!obj) return "\u2014";
+  const val = obj.state;
+  const unit = obj.attributes?.unit_of_measurement;
+  if (!val || val === "unavailable" || val === "unknown") return "\u2014";
+  const num = parseFloat(String(val).replace(",", "."));
+  if (!Number.isNaN(num)) return unit ? `${num.toFixed(2)} ${unit}` : String(num.toFixed(2));
+  return val;
+}
+function humanizeDurationSeconds(totalSeconds) {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor(seconds % 86400 / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (hours || days) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
+function looksLikeTimestamp(value) {
+  return /^\d{4}-\d{2}-\d{2}(?:[T\s]|$)/.test(String(value || "").trim());
+}
+function isUptimeTimestampState(obj) {
+  if (!obj) return false;
+  const deviceClass = String(obj.attributes?.device_class || "").toLowerCase().trim();
+  const originalDeviceClass = String(obj.attributes?.original_device_class || "").toLowerCase().trim();
+  const isUptimeTimestamp = deviceClass === "uptime" || deviceClass === "timestamp" || originalDeviceClass === "uptime" || originalDeviceClass === "timestamp";
+  if (!isUptimeTimestamp) return false;
+  const rawState = String(obj.state ?? "").trim();
+  return looksLikeTimestamp(rawState) && Number.isFinite(Date.parse(rawState));
+}
+function formatUptimeState(hass, entityId, now = Date.now()) {
+  const obj = stateObj(hass, entityId);
+  if (!obj) return "\u2014";
+  const rawState = String(obj.state ?? "").trim();
+  if (!rawState || rawState === "unavailable" || rawState === "unknown") return "\u2014";
+  if (isUptimeTimestampState(obj)) {
+    const parsedMs = Date.parse(rawState);
+    const nowMs = Number(now);
+    if (Number.isFinite(parsedMs) && Number.isFinite(nowMs)) {
+      return humanizeDurationSeconds((nowMs - parsedMs) / 1e3);
+    }
+  }
+  const raw = Number.parseFloat(rawState.replace(",", "."));
+  if (!Number.isFinite(raw)) return formatState(hass, entityId);
+  const unit = String(obj.attributes?.unit_of_measurement || "").toLowerCase().trim();
+  if (["s", "sec", "second", "seconds"].includes(unit)) {
+    return humanizeDurationSeconds(raw);
+  }
+  if (["min", "mins", "minute", "minutes"].includes(unit)) {
+    return humanizeDurationSeconds(raw * 60);
+  }
+  if (["h", "hr", "hour", "hours"].includes(unit)) {
+    return humanizeDurationSeconds(raw * 3600);
+  }
+  if (["d", "day", "days"].includes(unit)) {
+    return humanizeDurationSeconds(raw * 86400);
+  }
+  return formatState(hass, entityId);
+}
+function getPoeStatus(hass, port) {
+  const sw = stateValue(hass, port.poe_switch_entity);
+  const pwr = stateValue(hass, port.poe_power_entity);
+  const powerNum = pwr != null ? parseFloat(String(pwr).replace(",", ".")) : NaN;
+  const hasPowerDraw = !Number.isNaN(powerNum) && powerNum > 0;
+  return {
+    active: sw === "on" || sw === "true" || hasPowerDraw,
+    power: pwr ?? null
+  };
+}
+function trafficValue(hass, entityId) {
+  const raw = stateValue(hass, entityId);
+  if (raw == null || raw === "unavailable" || raw === "unknown") return 0;
+  const num = parseFloat(String(raw).replace(",", "."));
+  return Number.isFinite(num) ? num : 0;
+}
+function hasTraffic(hass, port) {
+  return trafficValue(hass, port?.rx_entity) > 0 || trafficValue(hass, port?.tx_entity) > 0;
+}
+function portObservedClientCount(hass, port) {
+  const candidates = [
+    port?.link_entity,
+    port?.speed_entity,
+    port?.port_switch_entity,
+    port?.rx_entity,
+    port?.tx_entity
+  ].filter(Boolean);
+  const numericKeys = [
+    "connected_clients",
+    "client_count",
+    "clients",
+    "num_clients",
+    "active_clients",
+    "station_count"
+  ];
+  const listKeys = ["clients", "connected_clients", "client_list", "stations", "hosts"];
+  let bestCount = 0;
+  for (const entityId of candidates) {
+    const attrs = stateObj(hass, entityId)?.attributes;
+    if (!attrs || typeof attrs !== "object") continue;
+    for (const key of numericKeys) {
+      const num = Number.parseInt(attrs[key], 10);
+      if (Number.isInteger(num) && num > bestCount) bestCount = num;
+    }
+    for (const key of listKeys) {
+      const value = attrs[key];
+      if (Array.isArray(value) && value.length > bestCount) bestCount = value.length;
+    }
+  }
+  return bestCount;
+}
+function explicitPortMedia(port) {
+  const media = lower(port?.media || port?.media_type || "");
+  if (["rj45", "sfp", "sfp_plus", "sfp28"].includes(media)) return media;
+  return null;
+}
+function isSfpSpecialPort(port) {
+  if (port?.kind !== "special") return false;
+  const media = explicitPortMedia(port);
+  if (media === "rj45") return false;
+  if (media) return media !== "rj45";
+  const key = lower(port?.physical_key || port?.key || "");
+  return key.startsWith("sfp_") || key.startsWith("sfp28_");
+}
+function isSfpLikePort(port) {
+  const media = explicitPortMedia(port);
+  if (media === "rj45") return false;
+  if (media) return media !== "rj45";
+  if (isSfpSpecialPort(port)) return true;
+  const text = [
+    port?.key,
+    port?.physical_key,
+    port?.label,
+    port?.speed_entity,
+    port?.rx_entity,
+    port?.tx_entity,
+    port?.link_entity
+  ].filter(Boolean).join(" ").toLowerCase();
+  return text.includes("sfp") || text.includes("10g");
+}
+function isPortConnected(hass, port, { trustLowSpeedLink = false } = {}) {
+  if (port.link_entity) {
+    const s = lower(stateValue(hass, port.link_entity));
+    if (["on", "true", "connected", "up", "active"].includes(s)) return true;
+    if (["off", "false", "disconnected", "down", "inactive"].includes(s)) return false;
+  }
+  if (isSfpSpecialPort(port) && (port?.rx_entity || port?.tx_entity) && !port?.link_entity && !port?.speed_entity) {
+    return hasTraffic(hass, port);
+  }
+  const speedMbit = parseLinkSpeedMbit(hass, port.speed_entity);
+  if (speedMbit != null) {
+    if (speedMbit > 0) {
+      if (!trustLowSpeedLink && !isSfpLikePort(port) && !port?.link_entity && speedMbit <= 10) {
+        const hasActiveTraffic = hasTraffic(hass, port);
+        const clientCount = portObservedClientCount(hass, port);
+        const poeActive = getPoeStatus(hass, port).active;
+        if (!hasActiveTraffic && clientCount === 0 && !poeActive) return false;
+      }
+      if (isSfpLikePort(port) && !port?.link_entity && (port?.rx_entity || port?.tx_entity)) {
+        if (!hasTraffic(hass, port)) return false;
+      }
+      return true;
+    }
+    if (speedMbit <= 0) return false;
+  }
+  const rx = stateValue(hass, port.rx_entity);
+  const tx = stateValue(hass, port.tx_entity);
+  const rxNum = rx != null ? parseFloat(String(rx).replace(",", ".")) : NaN;
+  const txNum = tx != null ? parseFloat(String(tx).replace(",", ".")) : NaN;
+  if (!Number.isNaN(rxNum) && rxNum > 0 || !Number.isNaN(txNum) && txNum > 0) {
+    return true;
+  }
+  return false;
+}
+function getPortSpeedText(hass, port) {
+  const s = stateValue(hass, port.speed_entity);
+  if (!s || s === "unavailable" || s === "unknown") return null;
+  return s;
+}
+
+// src/product-images.js
+var OFFICIAL_PRODUCT_IMAGES = Object.freeze({
+  USWFLEX25G8POE: {
+    name: "Switch Flex 2.5G PoE",
+    presentation: "wide",
+    image: "https://cdn.ecomm.ui.com/products/e9d97121-f363-4261-83db-5f74e093a304/fe2ed56d-fab4-4051-b3e9-100bb823afd4.png",
+    product: "https://store.ui.com/us/en/products/usw-flex-2-5g-8-poe"
+  },
+  USF5P: {
+    name: "Switch Flex",
+    presentation: "wide",
+    image: "https://cdn.ecomm.ui.com/products/c9a07d37-b390-4a5b-89c5-3cdab8e011c7/99522e31-4acc-49b9-8ca3-5d8fc6e4185f.png",
+    product: "https://store.ui.com/us/en/products/usw-flex"
+  },
+  USMINI: {
+    name: "Switch Flex Mini",
+    presentation: "wide",
+    image: "https://cdn.ecomm.ui.com/products/5a176b22-af34-40f2-820c-958610df1825/5f495f89-3eb9-4092-8070-e6c61b02d3c3.png",
+    product: "https://store.ui.com/us/en/products/usw-flex-mini"
+  },
+  U7PROWALL: {
+    name: "Access Point U7 Pro Wall",
+    presentation: "square",
+    scale: 1.15,
+    image: "https://cdn.ecomm.ui.com/products/7dacb4f6-b703-4154-9264-784f2eb0dbda/f1cb65a5-c557-4e02-bcbb-090502a95b84.png",
+    product: "https://store.ui.com/us/en/products/u7-pro-wall"
+  },
+  USL8A: {
+    name: "Switch Aggregation",
+    presentation: "wide",
+    image: "https://cdn.ecomm.ui.com/products/1c748fb1-b4df-43ef-83e0-d5ed26f9db7c/78dc5054-a468-401c-ac2a-2a00930c96ff.png",
+    product: "https://store.ui.com/us/en/products/usw-aggregation"
+  },
+  UKULTRA: {
+    name: "Swiss Army Knife Ultra",
+    presentation: "square",
+    scale: 1.15,
+    image: "https://cdn.ecomm.ui.com/products/eecac847-6407-4539-bbf0-03d0f8f3232f/9573d154-2b35-40df-8491-819c2a7eb244.png",
+    product: "https://store.ui.com/us/en/products/uk-ultra"
+  },
+  UAPACPRO: {
+    name: "Access Point AC Pro",
+    presentation: "square",
+    image: "https://cdn.ecomm.ui.com/products/28be41e3-da0e-4aae-98ce-5978cc61726c/8cc6250e-6c3b-4da2-8217-ae6422a5e153.png",
+    product: "https://store.ui.com/us/en/products/uap-ac-pro"
+  },
+  UDBSWITCH: {
+    name: "Device Bridge Switch",
+    presentation: "wide",
+    scale: 1,
+    image: "https://cdn.ecomm.ui.com/products/c0d3fc51-9532-4cdf-89f1-631324bf8e4e/8759cd3b-d12f-444f-97dc-889d87f87dbd.png",
+    product: "https://store.ui.com/us/en/products/udb-switch"
+  },
+  USL16P: {
+    name: "Switch 16 PoE",
+    presentation: "wide",
+    image: "https://cdn.ecomm.ui.com/products/ab04370e-f45d-4651-828c-b290de8df45b/52b4001a-a88f-40a1-b8a5-9c4da4d8501b.png",
+    product: "https://store.ui.com/us/en/products/usw-16-poe"
+  },
+  US48PRO2: {
+    name: "Switch Pro 48",
+    presentation: "wide",
+    image: "https://cdn.ecomm.ui.com/products/17a1db0a-a705-4ea0-b538-2972ca71615a/9ff10997-647b-4a9a-be52-3b24a2f96ea2.png",
+    product: "https://store.ui.com/us/en/products/usw-pro-48"
+  },
+  USPM16P: {
+    name: "Switch Pro Max 16 PoE",
+    presentation: "wide",
+    image: "https://cdn.ecomm.ui.com/products/0694226c-9791-4d7e-9fb1-d98c91fe3fda/346874ce-466e-4221-8ee1-bac91f1af1da.png",
+    product: "https://store.ui.com/us/en/products/usw-pro-max-16-poe"
+  },
+  U7PRO: {
+    name: "Access Point U7 Pro",
+    presentation: "square",
+    image: "https://cdn.ecomm.ui.com/products/fa8dd4e4-36c8-4c79-a928-22c7bff2ce29/ab5bc8a4-6135-402e-a695-e3ea5e16d3e6.png",
+    product: "https://store.ui.com/us/en/products/u7-pro"
+  },
+  UCGFIBER: {
+    name: "Cloud Gateway Fiber",
+    presentation: "square",
+    image: "https://cdn.ecomm.ui.com/products/48cf74fa-0456-4c5f-bbcc-c1a1ffdc11f9/fdb62848-bfa7-4c01-b2ad-fe4df272a511.png",
+    rearImage: "https://cdn.ecomm.ui.com/products/48cf74fa-0456-4c5f-bbcc-c1a1ffdc11f9/0cbb9b18-45af-4638-9e3c-70e0f1e3b5e8.png",
+    product: "https://store.ui.com/us/en/products/ucg-fiber",
+    announcement: "https://blog.ui.com/article/introducing-all-new-10-gigabit-unifi-cloud-gateways"
+  },
+  USWULTRA60W: {
+    name: "Switch Ultra 60W",
+    presentation: "wide",
+    image: "https://cdn.ecomm.ui.com/products/d1af5d9b-b74c-4881-99af-033b71ed1590/ad2ded5f-569d-4bfb-b97e-380d42e5e268.png",
+    product: "https://store.ui.com/us/en/products/usw-ultra-60w"
+  },
+  USWULTRA210W: {
+    name: "Switch Ultra 210W",
+    presentation: "wide",
+    image: "https://cdn.ecomm.ui.com/products/d1af5d9b-b74c-4881-99af-033b71ed1590/ad2ded5f-569d-4bfb-b97e-380d42e5e268.png",
+    product: "https://store.ui.com/us/en/products/usw-ultra-210w"
+  },
+  U6MESH: {
+    name: "Access Point U6 Mesh",
+    presentation: "portrait",
+    scale: 1.45,
+    image: "https://cdn.ecomm.ui.com/products/7b8f8da5-d684-4170-be1f-71b53af8d7f9/fdce5345-80e9-4edd-bf5b-93cf9141649e.png",
+    product: "https://store.ui.com/us/en/products/u6-mesh"
+  },
+  UX: {
+    name: "UniFi Express",
+    presentation: "square",
+    image: "https://cdn.ecomm.ui.com/products/4ed25b4c-db92-4b98-bbf3-b0989f007c0e/e0cb1068-b405-4e0d-8de9-872d28017c73.png",
+    product: "https://store.ui.com/us/en/products/ux"
+  },
+  UX7: {
+    name: "UniFi Express 7",
+    presentation: "square",
+    image: "https://cdn.ecomm.ui.com/products/d3220754-f4a9-4ecc-a0bd-64e1520ef471/3c825279-5f12-4420-8f9f-acb8019bb192.png",
+    rearImage: "https://cdn.ecomm.ui.com/products/d3220754-f4a9-4ecc-a0bd-64e1520ef471/0d741227-55c5-4640-a1c0-ba7509e93d80.png",
+    product: "https://store.ui.com/us/en/products/ux7",
+    announcement: "https://blog.ui.com/article/introducing-all-new-10-gigabit-unifi-cloud-gateways"
+  }
+});
+function getOfficialProductImage(modelKey) {
+  const key = String(modelKey || "").trim().toUpperCase();
+  return OFFICIAL_PRODUCT_IMAGES[key] || null;
+}
+function optimizeOfficialProductImage(url, width = 960) {
+  const source = String(url || "").trim();
+  if (!source) return "";
+  const targetWidth = Math.min(1600, Math.max(320, Number.parseInt(width, 10) || 960));
+  return `https://images.svc.ui.com/?u=${encodeURIComponent(source)}&q=82&w=${targetWidth}`;
+}
+function normalizeProductImageUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (/^https:\/\//i.test(url)) return url;
+  if (/^\/(?:local|api)\//i.test(url)) return url;
+  if (/^data:image\/(?:avif|gif|jpeg|png|webp);/i.test(url)) return url;
+  return "";
+}
+
+// src/translations.js
+var TRANSLATIONS = {
+  en: {
+    // Card states
+    select_device: "Please select a UniFi device in the card editor.",
+    loading: "Loading device data\u2026",
+    no_data: "No device data available.",
+    no_ports: "No ports detected.",
+    // Front panel
+    front_panel: "Front Panel",
+    product_image: "product image",
+    product_image_official: "Official Ubiquiti product view",
+    product_views: "Product views",
+    product_front: "Front",
+    product_rear: "Rear",
+    cpu_utilization: "CPU utilization",
+    cpu_temperature: "CPU temperature",
+    memory_utilization: "Memory utilization",
+    temperature: "Temperature",
+    // Port detail
+    link_status: "Link Status",
+    ap_status: "AP Status",
+    mesh_signal: "Mesh signal",
+    signal_weak: "Weak",
+    signal_fair: "Fair",
+    signal_good: "Good",
+    signal_excellent: "Excellent",
+    link_lan: "Link LAN",
+    link_mesh: "Link Mesh",
+    uplink: "Uplink",
+    uptime: "Uptime",
+    clients: "Clients",
+    wlan_clients: "Wi-Fi clients",
+    wlan_clients_by_band: "Wi-Fi clients by frequency band",
+    band_24: "2.4 GHz",
+    band_5: "5 GHz",
+    band_6: "6 GHz",
+    band_unknown: "Band unknown",
+    without_band_data: "{count} without band data",
+    speed: "Speed",
+    vlan: "VLAN",
+    poe: "PoE",
+    poe_power: "PoE Power",
+    connected: "Connected",
+    no_link: "No link",
+    online: "Online",
+    offline: "Offline",
+    // Actions
+    port_disable: "Disable port",
+    port_enable: "Enable port",
+    confirm_disable_port_title: "Disable port?",
+    confirm_disable_port_message: "Do you really want to disable {port}?",
+    confirm_yes: "Yes",
+    confirm_no: "No",
+    poe_off: "PoE off",
+    poe_on: "PoE on",
+    power_cycle: "Power Cycle",
+    reboot: "Reboot",
+    led_on: "LED On",
+    led_off: "LED Off",
+    // Hints
+    speed_disabled: "Speed entity disabled \u2014 enable it in HA to show link speed.",
+    telemetry_unavailable_title: "Telemetry not available",
+    telemetry_unavailable_body: "The selected device does not provide the following telemetry data, so these values are not shown in the header.",
+    // Editor
+    editor_device_title: "Device",
+    editor_device_label: "UniFi Device",
+    editor_device_loading: "Loading devices from Home Assistant\u2026",
+    editor_device_select: "Select device\u2026",
+    editor_name_toggle_label: "Display name",
+    editor_name_toggle_text: "Show display name in the card header",
+    editor_name_toggle_hint: "Enabled by default. When disabled, only the model/firmware line is shown.",
+    editor_name_label: "Display name text",
+    editor_name_hint: "Optional \u2014 updates automatically when switching devices unless you changed it manually",
+    editor_telemetry_toggle_label: "Header telemetry",
+    editor_telemetry_toggle_text: "Show telemetry data in the card header",
+    editor_telemetry_toggle_hint: "Enabled by default. Disable to hide CPU, memory, and temperature rows in the header.",
+    editor_product_image_toggle_label: "Product view",
+    editor_product_image_toggle_text: "Show the real product image",
+    editor_product_image_available: "Official Ubiquiti artwork is available for {model}. Enabling this option loads it from Ubiquiti's image CDN.",
+    editor_product_image_unavailable: "No exact official image mapping is available for this model yet. You can still enter a custom image below.",
+    editor_product_image_url_label: "Custom product image (optional)",
+    editor_product_image_url_hint: "Overrides the official image. Use an HTTPS URL, /local/ path, /api/ path, or image data URL.",
+    editor_panel_toggle_label: "Front panel",
+    editor_panel_toggle_text: "Show front panel hardware view",
+    editor_panel_toggle_hint: "Enabled by default. Disable to hide the visual front panel.",
+    editor_dynamic_port_details_label: "Dynamic port details",
+    editor_dynamic_port_details_text: "Show port details on selection",
+    editor_dynamic_port_details_hint: "Starts with no selected port. Click a port to show its details; click it again to hide them.",
+    editor_ports_per_row_label: "Ports per row (optional)",
+    editor_ports_per_row_hint: "Only for switches. Leave empty for automatic layout, or set a number (for example 4, 6, 8, 12).",
+    editor_force_sequential_ports_label: "Force sequential ports",
+    editor_force_sequential_ports_hint: "Disable odd/even port layout and keep ports in natural numeric order.",
+    editor_edit_special_ports_toggle: "Edit special ports",
+    editor_edit_special_ports_toggle_hint: "Enable to show WAN/WAN2 selectors and customize which ports appear in the top special row.",
+    editor_custom_special_ports_label: "Special ports (top row)",
+    editor_custom_special_ports_hint: "Click to toggle ports in the upper special row. Unselected ports move to the normal grid.",
+    editor_trust_link_speed_ports_label: "Trust 10 Mbit/s link speed on ports",
+    editor_trust_link_speed_ports_hint: "Only select ports with a real 10 Mbit/s connection. This disables the false-link protection for the selected port.",
+    editor_port_led_blink_label: "Port link LED animation",
+    editor_port_led_blink_text: "Blink connected port link LEDs",
+    editor_port_led_blink_rj45_text: "Blink RJ45 link LEDs",
+    editor_port_led_blink_sfp_text: "Blink SFP link LEDs",
+    editor_port_led_blink_speed_label: "Blink rate (1\u201310 per second)",
+    editor_port_led_blink_hint: "Optional visual effect only. It does not change port state, traffic detection, or controls.",
+    editor_port_size_label: "Port size",
+    editor_port_size_hint: "Adjusts front-panel port size for switches and gateways.",
+    editor_ap_scale_label: "AP size",
+    editor_ap_scale_hint: "Scales the AP device size in AP card mode.",
+    editor_device_layout_label: "Device layout",
+    editor_device_layout_combined: "Switch/Gateway and AP layout",
+    editor_device_layout_network: "Switch/Gateway only",
+    editor_device_layout_ap: "AP only",
+    editor_device_layout_hint: "For integrated In-Wall devices. The combined layout is the default.",
+    editor_integrated_ports_toggle_label: "Integrated ports",
+    editor_integrated_ports_toggle_text: "Show integrated switch ports",
+    editor_integrated_ports_toggle_hint: "For compatible In-Wall access points. Disable for the classic AP-only view.",
+    editor_ap_compact_toggle_label: "AP layout",
+    editor_ap_compact_toggle_text: "Use compact AP layout",
+    editor_ap_compact_toggle_hint: "Only for access points. Places AP image and status details side by side.",
+    editor_ap_compact_header_telemetry_label: "AP compact header",
+    editor_ap_compact_header_telemetry_text: "Show telemetry in compact header",
+    editor_ap_compact_header_telemetry_hint: "Only visible in compact AP layout. Adds utilization and temperature to the header.",
+    editor_mesh_signal_entity_label: "Mesh signal entity (optional)",
+    editor_mesh_signal_entity_hint: "Sensor with RSSI in dBm or signal quality in %. It is shown only while a wireless mesh uplink is detected. Leave empty for automatic detection.",
+    editor_mesh_signal_detected: "Automatically detected: {entity}.",
+    editor_no_devices: "No UniFi switches, gateways, or access points found in Home Assistant.",
+    editor_hint: "Only devices from the UniFi Network Integration are shown.",
+    editor_error: "Failed to load UniFi devices.",
+    // WAN / WAN2 selector (editor — gateway only)
+    editor_wan_port_label: "WAN Port",
+    editor_wan_port_auto: "Default (automatic)",
+    editor_wan_port_hint: "Select which port is used as WAN. Only shown for gateway devices.",
+    editor_wan_port_lan: "LAN",
+    editor_wan_port_sfp: "SFP",
+    editor_wan_port_sfpwan: "SFP (WAN-capable)",
+    editor_wan2_port_label: "WAN 2 Port",
+    editor_wan2_port_hint: "Optional second WAN/uplink port. Set to \u201CDisabled\u201D if not needed.",
+    editor_wan2_port_none: "Disabled",
+    // Raw HA state values that may appear in the link status / PoE fields
+    state_on: "On",
+    state_off: "Off",
+    state_up: "Up",
+    state_down: "Down",
+    state_connected: "Connected",
+    state_disconnected: "Disconnected",
+    state_true: "Connected",
+    state_false: "No link",
+    state_active: "Active",
+    state_pending: "Pending",
+    state_firmware_mismatch: "Firmware mismatch",
+    state_upgrading: "Upgrading",
+    state_provisioning: "Provisioning",
+    state_heartbeat_missed: "Heartbeat missed",
+    state_adopting: "Adopting",
+    state_deleting: "Deleting",
+    state_inform_error: "Inform error",
+    state_adoption_failed: "Adoption failed",
+    state_isolated: "Isolated",
+    // Port label prefix (used in detail panel title)
+    port_label: "Port",
+    // Background color field (editor)
+    editor_bg_label: "Background color (optional)",
+    editor_bg_hint: "Default: var(--card-background-color)",
+    editor_bg_opacity_label: "Card transparency",
+    editor_bg_opacity_hint: "0% = fully transparent, 100% = fully opaque",
+    editor_colors_open: "Change colors",
+    editor_colors_open_hint: "Open advanced color editor with live preview and per-area color pickers.",
+    editor_colors_back: "Back to editor",
+    editor_colors_apply: "Apply colors",
+    editor_colors_step_hint: "Tip: Click any area to open the color picker dialog.",
+    editor_colors_reset_slot: "Reset this color",
+    editor_colors_reset_all: "Reset all colors",
+    editor_colors_done: "Done",
+    editor_colors_alpha_label: "Alpha",
+    editor_colors_default_value: "Default",
+    editor_color_slot_background: "Background",
+    editor_color_slot_title: "Title",
+    editor_color_slot_telemetry: "Telemetry",
+    editor_color_slot_label: "Labels",
+    editor_color_slot_value: "Values",
+    editor_color_slot_meta: "Model/Firmware",
+    editor_color_slot_port_label: "Port labels",
+    editor_color_slot_special_port_label: "Special port label",
+    editor_color_slot_ap_ring: "AP outer ring",
+    editor_color_slot_ap_inner: "AP inner circle",
+    editor_color_slot_ap_color: "AP color",
+    editor_color_slot_ap_led: "AP LED fallback",
+    editor_ap_led_color_disabled_hint: "Disabled because RGB LED control is available.",
+    editor_color_slot_button: "Button background",
+    editor_color_slot_button_text: "Button text/icon",
+    editor_color_slot_button_secondary: "Secondary button background",
+    editor_color_slot_button_secondary_text: "Secondary button text/icon",
+    editor_color_slot_button_border: "Button border",
+    editor_button_theme_style_label: "Use theme button colors",
+    editor_button_theme_style_hint: "Use Home Assistant theme variables for button background and text/icon colors.",
+    editor_button_default_color_label: "Use default button colors",
+    editor_button_default_color_hint: "When theme colors are off, keep the card's built-in button colors unless custom colors are enabled.",
+    // Entity warning — loading hint
+    warning_checking: "Checking selected device for disabled or hidden UniFi entities\u2026",
+    // Entity warning — content
+    warning_title: "Disabled or hidden UniFi entities detected",
+    warning_body: "The selected device has relevant UniFi entities that are currently disabled or hidden. This can lead to missing controls, incomplete telemetry, or incorrect port status in the card.",
+    warning_status: "Status summary: {disabled} disabled, {hidden} hidden.",
+    warning_check_in: "Check in Home Assistant under:",
+    warning_ha_path: "Settings \u2192 Devices &amp; Services \u2192 UniFi \u2192 Devices / Entities",
+    // Entity warning — entity type labels (used with a leading count number)
+    warning_entity_port_switch: "port switch entities",
+    warning_entity_poe_switch: "PoE switch entities",
+    warning_entity_poe_power: "PoE power sensors",
+    warning_entity_link_speed: "link speed sensors",
+    warning_entity_rx_tx: "RX/TX sensors",
+    warning_entity_power_cycle: "power cycle buttons",
+    warning_entity_link: "link entities",
+    warning_entity_header_cpu: "header CPU sensors",
+    warning_entity_header_memory: "header memory sensors",
+    warning_entity_header_cpu_temperature: "header CPU temperature sensors",
+    warning_entity_header_temperature: "header temperature sensors",
+    // Device type labels (used in device selector)
+    type_switch: "Switch",
+    type_gateway: "Gateway",
+    type_access_point: "Access Point"
+  },
+  de: {
+    // Card states
+    select_device: "Bitte im Karteneditor ein UniFi-Ger\xE4t ausw\xE4hlen.",
+    loading: "Lade Ger\xE4tedaten\u2026",
+    no_data: "Keine Ger\xE4tedaten verf\xFCgbar.",
+    no_ports: "Keine Ports erkannt.",
+    // Front panel
+    front_panel: "Front Panel",
+    product_image: "Produktbild",
+    product_image_official: "Offizielle Ubiquiti-Produktansicht",
+    product_views: "Produktansichten",
+    product_front: "Vorne",
+    product_rear: "Hinten",
+    cpu_utilization: "CPU-Auslastung",
+    cpu_temperature: "CPU-Temperatur",
+    memory_utilization: "Speicherauslastung",
+    temperature: "Temperatur",
+    // Port detail
+    link_status: "Link Status",
+    ap_status: "AP Status",
+    mesh_signal: "Mesh-Signal",
+    signal_weak: "Schwach",
+    signal_fair: "Mittel",
+    signal_good: "Gut",
+    signal_excellent: "Ausgezeichnet",
+    link_lan: "Link LAN",
+    link_mesh: "Link Mesh",
+    uplink: "Uplink",
+    uptime: "Uptime",
+    clients: "Clients",
+    wlan_clients: "WLAN-Clients",
+    wlan_clients_by_band: "WLAN-Clients nach Frequenzband",
+    band_24: "2,4 GHz",
+    band_5: "5 GHz",
+    band_6: "6 GHz",
+    band_unknown: "Band unbekannt",
+    without_band_data: "{count} ohne Banddaten",
+    speed: "Geschwindigkeit",
+    vlan: "VLAN",
+    poe: "PoE",
+    poe_power: "PoE Leistung",
+    connected: "Verbunden",
+    no_link: "Kein Link",
+    online: "Online",
+    offline: "Offline",
+    // Actions
+    port_disable: "Port deaktivieren",
+    port_enable: "Port aktivieren",
+    confirm_disable_port_title: "Port deaktivieren?",
+    confirm_disable_port_message: "M\xF6chtest du {port} wirklich deaktivieren?",
+    confirm_yes: "Ja",
+    confirm_no: "Nein",
+    poe_off: "PoE Aus",
+    poe_on: "PoE Ein",
+    power_cycle: "Power Cycle",
+    reboot: "Neustart",
+    led_on: "LED Ein",
+    led_off: "LED Aus",
+    // Hints
+    speed_disabled: "Speed-Entity deaktiviert \u2014 in HA aktivieren f\xFCr Geschwindigkeitsanzeige.",
+    telemetry_unavailable_title: "Telemetrie nicht verf\xFCgbar",
+    telemetry_unavailable_body: "Das ausgew\xE4hlte Ger\xE4t stellt die folgenden Telemetriedaten nicht bereit. Diese Werte werden daher nicht im Header angezeigt.",
+    // Editor
+    editor_device_title: "Ger\xE4t",
+    editor_device_label: "UniFi Ger\xE4t",
+    editor_device_loading: "Lade Ger\xE4te aus Home Assistant\u2026",
+    editor_device_select: "Ger\xE4t ausw\xE4hlen\u2026",
+    editor_name_toggle_label: "Anzeigename",
+    editor_name_toggle_text: "Anzeigenamen im Kartenkopf anzeigen",
+    editor_name_toggle_hint: "Standardm\xE4\xDFig aktiviert. Wenn deaktiviert, wird nur die Modell-/Firmware-Zeile angezeigt.",
+    editor_name_label: "Text f\xFCr den Anzeigenamen",
+    editor_name_hint: "Optional \u2014 wird beim Ger\xE4tewechsel automatisch aktualisiert, solange du ihn nicht manuell ge\xE4ndert hast",
+    editor_telemetry_toggle_label: "Header-Telemetrie",
+    editor_telemetry_toggle_text: "Telemetriedaten im Karten-Header anzeigen",
+    editor_telemetry_toggle_hint: "Standardm\xE4\xDFig aktiviert. Deaktivieren blendet CPU-, Speicher- und Temperaturzeilen im Header aus.",
+    editor_product_image_toggle_label: "Produktansicht",
+    editor_product_image_toggle_text: "Echtes Produktbild anzeigen",
+    editor_product_image_available: "F\xFCr {model} ist ein offizielles Ubiquiti-Produktbild hinterlegt. Beim Aktivieren wird es vom Ubiquiti-Bild-CDN geladen.",
+    editor_product_image_unavailable: "F\xFCr dieses Modell gibt es noch keine exakte offizielle Bildzuordnung. Unten kann trotzdem ein eigenes Bild angegeben werden.",
+    editor_product_image_url_label: "Eigenes Produktbild (optional)",
+    editor_product_image_url_hint: "\xDCberschreibt das offizielle Bild. M\xF6glich sind eine HTTPS-URL, ein /local/- oder /api/-Pfad sowie eine Bild-Data-URL.",
+    editor_panel_toggle_label: "Frontpanel",
+    editor_panel_toggle_text: "Hardware-Frontpanel anzeigen",
+    editor_panel_toggle_hint: "Standardm\xE4\xDFig aktiviert. Deaktivieren blendet die visuelle Port-Ansicht aus.",
+    editor_dynamic_port_details_label: "Dynamische Portdetails",
+    editor_dynamic_port_details_text: "Portdetails bei Auswahl anzeigen",
+    editor_dynamic_port_details_hint: "Startet ohne ausgew\xE4hlten Port. Klicke einen Port an, um Details anzuzeigen, und erneut, um sie auszublenden.",
+    editor_ports_per_row_label: "Ports pro Zeile (optional)",
+    editor_ports_per_row_hint: "Nur f\xFCr Switches. Leer lassen f\xFCr automatisches Layout oder Zahl setzen (z. B. 4, 6, 8, 12).",
+    editor_force_sequential_ports_label: "Ports fortlaufend erzwingen",
+    editor_force_sequential_ports_hint: "Deaktiviert odd/even-Portlayout und zeigt Ports in nat\xFCrlicher Reihenfolge.",
+    editor_edit_special_ports_toggle: "Spezial-Ports bearbeiten",
+    editor_edit_special_ports_toggle_hint: "Aktivieren, um WAN/WAN2-Auswahl anzuzeigen und festzulegen, welche Ports in der oberen Spezial-Reihe erscheinen.",
+    editor_custom_special_ports_label: "Spezial-Ports (obere Reihe)",
+    editor_custom_special_ports_hint: "Per Klick Ports in der oberen Spezial-Reihe umschalten. Nicht gew\xE4hlte Ports erscheinen im normalen Grid.",
+    editor_trust_link_speed_ports_label: "10-Mbit/s-Link-Speed an Ports vertrauen",
+    editor_trust_link_speed_ports_hint: "Nur f\xFCr Ports mit einer echten 10-Mbit/s-Verbindung ausw\xE4hlen. Dadurch wird der Schutz vor f\xE4lschlich gemeldeten Links f\xFCr den ausgew\xE4hlten Port deaktiviert.",
+    editor_port_led_blink_label: "Port-Link-LED-Animation",
+    editor_port_led_blink_text: "Link-LEDs verbundener Ports blinken lassen",
+    editor_port_led_blink_rj45_text: "RJ45-Link-LEDs blinken lassen",
+    editor_port_led_blink_sfp_text: "SFP-Link-LEDs blinken lassen",
+    editor_port_led_blink_speed_label: "Blinkgeschwindigkeit (1\u201310 pro Sekunde)",
+    editor_port_led_blink_hint: "Nur ein optionaler optischer Effekt. Portstatus, Verkehrserkennung und Steuerung bleiben unver\xE4ndert.",
+    editor_port_size_label: "Portgr\xF6\xDFe",
+    editor_port_size_hint: "Skaliert die Frontpanel-Portgr\xF6\xDFe f\xFCr Switches und Gateways.",
+    editor_ap_scale_label: "AP-Gr\xF6\xDFe",
+    editor_ap_scale_hint: "Skaliert die AP-Ger\xE4tegr\xF6\xDFe im AP-Kartenmodus.",
+    editor_device_layout_label: "Ger\xE4telayout",
+    editor_device_layout_combined: "Switch/Gateway- und AP-Layout",
+    editor_device_layout_network: "Nur Switch/Gateway",
+    editor_device_layout_ap: "Nur AP",
+    editor_device_layout_hint: "F\xFCr integrierte In-Wall-Ger\xE4te. Das kombinierte Layout ist Standard.",
+    editor_integrated_ports_toggle_label: "Integrierte Ports",
+    editor_integrated_ports_toggle_text: "Integrierte Switch-Ports anzeigen",
+    editor_integrated_ports_toggle_hint: "F\xFCr kompatible In-Wall Access Points. Deaktivieren f\xFCr die klassische reine AP-Ansicht.",
+    editor_ap_compact_toggle_label: "AP-Layout",
+    editor_ap_compact_toggle_text: "Kompakte AP-Ansicht verwenden",
+    editor_ap_compact_toggle_hint: "Nur f\xFCr Access Points. Zeigt AP-Bild und Statusdetails nebeneinander an.",
+    editor_ap_compact_header_telemetry_label: "Kompakter AP-Header",
+    editor_ap_compact_header_telemetry_text: "Telemetrie im kompakten Header anzeigen",
+    editor_ap_compact_header_telemetry_hint: "Nur in der kompakten AP-Ansicht sichtbar. F\xFCgt Auslastung und Temperatur im Header hinzu.",
+    editor_mesh_signal_entity_label: "Mesh-Signal-Entity (optional)",
+    editor_mesh_signal_entity_hint: "Sensor mit RSSI in dBm oder Signalqualit\xE4t in %. Er wird nur bei erkanntem Wireless-Mesh-Uplink angezeigt. Leer lassen f\xFCr die automatische Erkennung.",
+    editor_mesh_signal_detected: "Automatisch erkannt: {entity}.",
+    editor_no_devices: "Keine UniFi Switches, Gateways oder Access Points in Home Assistant gefunden.",
+    editor_hint: "Nur Ger\xE4te aus der UniFi Network Integration werden angezeigt.",
+    editor_error: "UniFi-Ger\xE4te konnten nicht geladen werden.",
+    // WAN / WAN2 selector
+    editor_wan_port_label: "WAN-Port",
+    editor_wan_port_auto: "Standard (automatisch)",
+    editor_wan_port_hint: "W\xE4hle, welcher Port als WAN verwendet wird. Nur f\xFCr Gateway-Ger\xE4te.",
+    editor_wan_port_lan: "LAN",
+    editor_wan_port_sfp: "SFP",
+    editor_wan_port_sfpwan: "SFP (WAN-f\xE4hig)",
+    editor_wan2_port_label: "WAN2-Port",
+    editor_wan2_port_hint: "Optionaler zweiter WAN-/Uplink-Port. Bei Bedarf auf \u201EDeaktiviert\u201C setzen.",
+    editor_wan2_port_none: "Deaktiviert",
+    // Raw HA state values
+    state_on: "Ein",
+    state_off: "Aus",
+    state_up: "Verbunden",
+    state_down: "Kein Link",
+    state_connected: "Verbunden",
+    state_disconnected: "Getrennt",
+    state_true: "Verbunden",
+    state_false: "Kein Link",
+    state_active: "Aktiv",
+    state_pending: "Ausstehend",
+    state_firmware_mismatch: "Firmware-Konflikt",
+    state_upgrading: "Aktualisierung",
+    state_provisioning: "Provisionierung",
+    state_heartbeat_missed: "Heartbeat verloren",
+    state_adopting: "Wird adoptiert",
+    state_deleting: "Wird gel\xF6scht",
+    state_inform_error: "Inform-Fehler",
+    state_adoption_failed: "Adoption fehlgeschlagen",
+    state_isolated: "Isoliert",
+    // Port label prefix
+    port_label: "Port",
+    // Background color field (editor)
+    editor_bg_label: "Hintergrundfarbe (optional)",
+    editor_bg_hint: "Standard: var(--card-background-color)",
+    editor_bg_opacity_label: "Karten-Transparenz",
+    editor_bg_opacity_hint: "0% = vollst\xE4ndig transparent, 100% = vollst\xE4ndig deckend",
+    editor_colors_open: "Farben \xE4ndern",
+    editor_colors_open_hint: "\xD6ffnet den erweiterten Farb-Editor mit Live-Vorschau und Bereichs-Pickern.",
+    editor_colors_back: "Zur\xFCck zum Editor",
+    editor_colors_apply: "Farben \xFCbernehmen",
+    editor_colors_step_hint: "Tipp: Klicke auf einen Bereich, um den Color-Picker zu \xF6ffnen.",
+    editor_colors_reset_slot: "Diese Farbe zur\xFCcksetzen",
+    editor_colors_reset_all: "Alle Farben zur\xFCcksetzen",
+    editor_colors_done: "Fertig",
+    editor_colors_alpha_label: "Alpha",
+    editor_colors_default_value: "Standard",
+    editor_color_slot_background: "Hintergrund",
+    editor_color_slot_title: "Titel",
+    editor_color_slot_telemetry: "Telemetrie",
+    editor_color_slot_label: "Labels",
+    editor_color_slot_value: "Werte",
+    editor_color_slot_meta: "Modell/Firmware",
+    editor_color_slot_port_label: "Port-Beschriftung",
+    editor_color_slot_special_port_label: "Spezial-Port-Beschriftung",
+    editor_color_slot_ap_ring: "AP Au\xDFenring",
+    editor_color_slot_ap_inner: "AP Innenkreis",
+    editor_color_slot_ap_color: "AP Farbe",
+    editor_color_slot_ap_led: "AP LED-Fallback",
+    editor_ap_led_color_disabled_hint: "Durch RGB-LED-Steuerung deaktiviert.",
+    editor_color_slot_button: "Button-Hintergrund",
+    editor_color_slot_button_text: "Button-Text/Icon",
+    editor_color_slot_button_secondary: "Sekund\xE4rer Button-Hintergrund",
+    editor_color_slot_button_secondary_text: "Sekund\xE4rer Button-Text/Icon",
+    editor_color_slot_button_border: "Button-Rahmen",
+    editor_button_theme_style_label: "Buttons im Theme-Stil",
+    editor_button_theme_style_hint: "Verwendet Home-Assistant-Theme-Variablen f\xFCr Button-Hintergrund und Text/Icon-Farbe.",
+    editor_button_default_color_label: "Default Button-Farben verwenden",
+    editor_button_default_color_hint: "Wenn Theme-Farben aus sind, bleiben die eingebauten Button-Farben aktiv, solange Custom-Farben nicht aktiviert sind.",
+    // Entity warning — loading hint
+    warning_checking: "Ausgew\xE4hltes Ger\xE4t auf deaktivierte oder versteckte UniFi-Entities pr\xFCfen\u2026",
+    // Entity warning — content
+    warning_title: "Deaktivierte oder versteckte UniFi-Entities erkannt",
+    warning_body: "Das ausgew\xE4hlte Ger\xE4t hat relevante UniFi-Entities, die derzeit deaktiviert oder versteckt sind. Das kann zu fehlenden Bedienelementen, unvollst\xE4ndiger Telemetrie oder falschem Portstatus in der Karte f\xFChren.",
+    warning_status: "Zusammenfassung: {disabled} deaktiviert, {hidden} versteckt.",
+    warning_check_in: "In Home Assistant pr\xFCfen unter:",
+    warning_ha_path: "Einstellungen \u2192 Ger\xE4te &amp; Dienste \u2192 UniFi \u2192 Ger\xE4te / Entities",
+    // Entity warning — entity type labels
+    warning_entity_port_switch: "Port-Switch-Entities",
+    warning_entity_poe_switch: "PoE-Switch-Entities",
+    warning_entity_poe_power: "PoE-Leistungssensoren",
+    warning_entity_link_speed: "Linkgeschwindigkeitssensoren",
+    warning_entity_rx_tx: "RX/TX-Sensoren",
+    warning_entity_power_cycle: "Power-Cycle-Buttons",
+    warning_entity_link: "Link-Entities",
+    warning_entity_header_cpu: "Header-CPU-Sensoren",
+    warning_entity_header_memory: "Header-Speichersensoren",
+    warning_entity_header_cpu_temperature: "Header-CPU-Temperatursensoren",
+    warning_entity_header_temperature: "Header-Temperatursensoren",
+    // Device type labels
+    type_switch: "Switch",
+    type_gateway: "Gateway",
+    type_access_point: "Access Point"
+  },
+  nl: {
+    // Card states
+    select_device: "Selecteer een UniFi-apparaat in de kaarteditor.",
+    loading: "Apparaatgegevens laden\u2026",
+    no_data: "Geen apparaatgegevens beschikbaar.",
+    no_ports: "Geen poorten gedetecteerd.",
+    // Front panel
+    front_panel: "Frontpaneel",
+    product_image: "productafbeelding",
+    product_image_official: "Offici\xEBle Ubiquiti-productweergave",
+    cpu_utilization: "CPU-gebruik",
+    cpu_temperature: "CPU-temperatuur",
+    memory_utilization: "Geheugengebruik",
+    temperature: "Temperatuur",
+    // Port detail
+    link_status: "Linkstatus",
+    ap_status: "AP-status",
+    mesh_signal: "Mesh-signaal",
+    signal_weak: "Zwak",
+    signal_fair: "Redelijk",
+    signal_good: "Goed",
+    signal_excellent: "Uitstekend",
+    link_lan: "Link LAN",
+    link_mesh: "Link Mesh",
+    uplink: "Uplink",
+    uptime: "Uptime",
+    clients: "Clients",
+    speed: "Snelheid",
+    poe: "PoE",
+    poe_power: "PoE-vermogen",
+    connected: "Verbonden",
+    no_link: "Geen link",
+    online: "Online",
+    offline: "Offline",
+    // Actions
+    port_disable: "Poort uitschakelen",
+    port_enable: "Poort inschakelen",
+    confirm_disable_port_title: "Poort uitschakelen?",
+    confirm_disable_port_message: "Weet je zeker dat je {port} wilt uitschakelen?",
+    confirm_yes: "Ja",
+    confirm_no: "Nee",
+    poe_off: "PoE uit",
+    poe_on: "PoE aan",
+    power_cycle: "Power Cycle",
+    reboot: "Herstarten",
+    led_on: "LED aan",
+    led_off: "LED uit",
+    // Hints
+    speed_disabled: "Snelheidsentiteit uitgeschakeld \u2014 schakel in HA in om linksnelheid te tonen.",
+    telemetry_unavailable_title: "Telemetrie niet beschikbaar",
+    telemetry_unavailable_body: "Het geselecteerde apparaat levert de volgende telemetriegegevens niet, daarom worden deze waarden niet in de kop getoond.",
+    // Editor
+    editor_device_title: "Apparaat",
+    editor_device_label: "UniFi-apparaat",
+    editor_device_loading: "Apparaten laden uit Home Assistant\u2026",
+    editor_device_select: "Apparaat selecteren\u2026",
+    editor_name_toggle_label: "Weergavenaam",
+    editor_name_toggle_text: "Weergavenaam tonen in de kaartkop",
+    editor_name_toggle_hint: "Standaard ingeschakeld. Indien uitgeschakeld, wordt alleen de model-/firmwareregel getoond.",
+    editor_name_label: "Tekst voor de weergavenaam",
+    editor_name_hint: "Optioneel \u2014 wordt automatisch bijgewerkt bij het wisselen van apparaat zolang je hem niet handmatig hebt aangepast",
+    editor_telemetry_toggle_label: "Headertelemetrie",
+    editor_telemetry_toggle_text: "Telemetriegegevens in de kaartkop tonen",
+    editor_telemetry_toggle_hint: "Standaard ingeschakeld. Uitschakelen verbergt CPU-, geheugen- en temperatuurregels in de kop.",
+    editor_product_image_toggle_label: "Productweergave",
+    editor_product_image_toggle_text: "Echte productafbeelding tonen",
+    editor_product_image_available: "Offici\xEBle Ubiquiti-afbeeldingen zijn beschikbaar voor {model}. Bij inschakelen worden ze geladen via Ubiquiti's afbeeldings-CDN.",
+    editor_product_image_unavailable: "Voor dit model is nog geen exacte offici\xEBle afbeelding gekoppeld. Hieronder kan wel een eigen afbeelding worden ingevuld.",
+    editor_product_image_url_label: "Eigen productafbeelding (optioneel)",
+    editor_product_image_url_hint: "Overschrijft de offici\xEBle afbeelding. Gebruik een HTTPS-URL, /local/-pad, /api/-pad of afbeeldings-data-URL.",
+    editor_panel_toggle_label: "Frontpaneel",
+    editor_panel_toggle_text: "Hardware-frontpaneel tonen",
+    editor_panel_toggle_hint: "Standaard ingeschakeld. Uitschakelen verbergt de visuele poortweergave.",
+    editor_dynamic_port_details_label: "Dynamische poortdetails",
+    editor_dynamic_port_details_text: "Poortdetails tonen na selectie",
+    editor_dynamic_port_details_hint: "Start zonder geselecteerde poort. Klik op een poort voor details en klik opnieuw om ze te verbergen.",
+    editor_ports_per_row_label: "Poorten per rij (optioneel)",
+    editor_ports_per_row_hint: "Alleen voor switches. Leeg laten voor automatische layout of een getal instellen (bijv. 4, 6, 8, 12).",
+    editor_force_sequential_ports_label: "Opeenvolgende poorten forceren",
+    editor_force_sequential_ports_hint: "Schakelt odd/even-poortindeling uit en houdt poorten in natuurlijke volgorde.",
+    editor_edit_special_ports_toggle: "Speciale poorten bewerken",
+    editor_edit_special_ports_toggle_hint: "Inschakelen om WAN/WAN2-selectie te tonen en te bepalen welke poorten in de bovenste speciale rij staan.",
+    editor_custom_special_ports_label: "Speciale poorten (bovenste rij)",
+    editor_custom_special_ports_hint: "Klik om poorten in de bovenste speciale rij te wisselen. Niet-geselecteerde poorten gaan naar het normale raster.",
+    editor_trust_link_speed_ports_label: "Vertrouw 10 Mbit/s-linksnelheid op poorten",
+    editor_trust_link_speed_ports_hint: "Selecteer alleen poorten met een echte 10 Mbit/s-verbinding. Dit schakelt de beveiliging tegen foutief gemelde links voor de geselecteerde poort uit.",
+    editor_port_led_blink_label: "Animatie van poortlink-leds",
+    editor_port_led_blink_text: "Link-leds van verbonden poorten laten knipperen",
+    editor_port_led_blink_rj45_text: "RJ45-link-leds laten knipperen",
+    editor_port_led_blink_sfp_text: "SFP-link-leds laten knipperen",
+    editor_port_led_blink_speed_label: "Knippersnelheid (1\u201310 per seconde)",
+    editor_port_led_blink_hint: "Alleen een optioneel visueel effect. Poortstatus, verkeersdetectie en bediening blijven ongewijzigd.",
+    editor_port_size_label: "Poortgrootte",
+    editor_port_size_hint: "Schaalt de poortgrootte op het frontpaneel voor switches en gateways.",
+    editor_ap_scale_label: "AP-grootte",
+    editor_ap_scale_hint: "Schaalt de AP-apparaatgrootte in AP-kaartmodus.",
+    editor_device_layout_label: "Apparaatindeling",
+    editor_device_layout_combined: "Switch/Gateway- en AP-indeling",
+    editor_device_layout_network: "Alleen Switch/Gateway",
+    editor_device_layout_ap: "Alleen AP",
+    editor_device_layout_hint: "Voor ge\xEFntegreerde In-Wall-apparaten. De gecombineerde indeling is standaard.",
+    editor_integrated_ports_toggle_label: "Ge\xEFntegreerde poorten",
+    editor_integrated_ports_toggle_text: "Ge\xEFntegreerde switchpoorten weergeven",
+    editor_integrated_ports_toggle_hint: "Voor compatibele In-Wall-accesspoints. Schakel dit uit voor de klassieke AP-weergave.",
+    editor_ap_compact_toggle_label: "AP-indeling",
+    editor_ap_compact_toggle_text: "Compacte AP-weergave gebruiken",
+    editor_ap_compact_toggle_hint: "Alleen voor access points. Toont AP-afbeelding en statusdetails naast elkaar.",
+    editor_ap_compact_header_telemetry_label: "Compacte AP-header",
+    editor_ap_compact_header_telemetry_text: "Telemetrie in compacte header tonen",
+    editor_ap_compact_header_telemetry_hint: "Alleen zichtbaar in compacte AP-weergave. Voegt gebruik en temperatuur toe aan de header.",
+    editor_mesh_signal_entity_label: "Mesh-signaalentiteit (optioneel)",
+    editor_mesh_signal_entity_hint: "Sensor met RSSI in dBm of signaalkwaliteit in %. Laat leeg voor automatische detectie.",
+    editor_no_devices: "Geen UniFi-switches, -gateways of access points gevonden in Home Assistant.",
+    editor_hint: "Alleen apparaten uit de UniFi Network-integratie worden weergegeven.",
+    editor_error: "UniFi-apparaten konden niet worden geladen.",
+    // WAN / WAN2 selector
+    editor_wan_port_label: "WAN-poort",
+    editor_wan_port_auto: "Standaard (automatisch)",
+    editor_wan_port_hint: "Selecteer welke poort als WAN wordt gebruikt. Alleen voor gateway-apparaten.",
+    editor_wan_port_lan: "LAN",
+    editor_wan_port_sfp: "SFP",
+    editor_wan_port_sfpwan: "SFP (WAN-geschikt)",
+    editor_wan2_port_label: "WAN 2-poort",
+    editor_wan2_port_hint: "Optionele tweede WAN-/uplinkpoort. Zet op \u201CUitgeschakeld\u201D als die niet nodig is.",
+    editor_wan2_port_none: "Uitgeschakeld",
+    // Raw HA state values
+    state_on: "Aan",
+    state_off: "Uit",
+    state_up: "Verbonden",
+    state_down: "Geen link",
+    state_connected: "Verbonden",
+    state_disconnected: "Verbroken",
+    state_true: "Verbonden",
+    state_false: "Geen link",
+    state_active: "Actief",
+    state_pending: "In behandeling",
+    state_firmware_mismatch: "Firmware komt niet overeen",
+    state_upgrading: "Bijwerken",
+    state_provisioning: "Provisioning",
+    state_heartbeat_missed: "Heartbeat gemist",
+    state_adopting: "Adopteren",
+    state_deleting: "Verwijderen",
+    state_inform_error: "Inform-fout",
+    state_adoption_failed: "Adoptie mislukt",
+    state_isolated: "Ge\xEFsoleerd",
+    // Port label prefix
+    port_label: "Poort",
+    // Background color field (editor)
+    editor_bg_label: "Achtergrondkleur (optioneel)",
+    editor_bg_hint: "Standaard: var(--card-background-color)",
+    editor_bg_opacity_label: "Kaarttransparantie",
+    editor_bg_opacity_hint: "0% = volledig transparant, 100% = volledig ondoorzichtig",
+    editor_colors_open: "Kleuren wijzigen",
+    editor_colors_open_hint: "Open geavanceerde kleureneditor met live preview en kleurkiezers per onderdeel.",
+    editor_colors_back: "Terug naar editor",
+    editor_colors_apply: "Kleuren toepassen",
+    editor_colors_step_hint: "Tip: Klik op een onderdeel om de kleurkiezer te openen.",
+    editor_colors_reset_slot: "Deze kleur resetten",
+    editor_colors_reset_all: "Alle kleuren resetten",
+    editor_colors_done: "Klaar",
+    editor_colors_alpha_label: "Alpha",
+    editor_colors_default_value: "Standaard",
+    editor_color_slot_background: "Achtergrond",
+    editor_color_slot_title: "Titel",
+    editor_color_slot_telemetry: "Telemetrie",
+    editor_color_slot_label: "Labels",
+    editor_color_slot_value: "Waarden",
+    editor_color_slot_meta: "Model/Firmware",
+    editor_color_slot_port_label: "Poortlabels",
+    editor_color_slot_special_port_label: "Speciale poortlabels",
+    editor_color_slot_ap_ring: "AP buitenring",
+    editor_color_slot_ap_inner: "AP binnencirkel",
+    editor_color_slot_ap_color: "AP kleur",
+    editor_color_slot_ap_led: "AP LED fallback",
+    editor_ap_led_color_disabled_hint: "Uitgeschakeld omdat RGB-ledbediening beschikbaar is.",
+    editor_color_slot_button: "Knopachtergrond",
+    editor_color_slot_button_text: "Knoptekst/-icoon",
+    editor_color_slot_button_secondary: "Achtergrond secundaire knop",
+    editor_color_slot_button_secondary_text: "Tekst/icoon secundaire knop",
+    editor_color_slot_button_border: "Knoprand",
+    editor_button_theme_style_label: "Themakleuren voor knoppen gebruiken",
+    editor_button_theme_style_hint: "Gebruik Home Assistant-themavariabelen voor knopachtergrond en tekst-/icoonkleuren.",
+    editor_button_default_color_label: "Standaard knopkleuren gebruiken",
+    editor_button_default_color_hint: "Als themakleuren uit staan, behoudt de kaart de ingebouwde knopkleuren tenzij aangepaste kleuren zijn ingeschakeld.",
+    // Entity warning
+    warning_checking: "Geselecteerd apparaat controleren op uitgeschakelde of verborgen UniFi-entiteiten\u2026",
+    warning_title: "Uitgeschakelde of verborgen UniFi-entiteiten gedetecteerd",
+    warning_body: "Het geselecteerde apparaat heeft relevante UniFi-entiteiten die momenteel uitgeschakeld of verborgen zijn. Dit kan leiden tot ontbrekende bediening, onvolledige telemetrie of een onjuiste poortstatus in de kaart.",
+    warning_status: "Samenvatting: {disabled} uitgeschakeld, {hidden} verborgen.",
+    warning_check_in: "Controleer in Home Assistant onder:",
+    warning_ha_path: "Instellingen \u2192 Apparaten &amp; Diensten \u2192 UniFi \u2192 Apparaten / Entiteiten",
+    warning_entity_port_switch: "poortschakelaar-entiteiten",
+    warning_entity_poe_switch: "PoE-schakelaar-entiteiten",
+    warning_entity_poe_power: "PoE-vermogenssensoren",
+    warning_entity_link_speed: "linksnelheidssensoren",
+    warning_entity_rx_tx: "RX/TX-sensoren",
+    warning_entity_power_cycle: "power cycle-knoppen",
+    warning_entity_link: "link-entiteiten",
+    warning_entity_header_cpu: "CPU-sensoren in de header",
+    warning_entity_header_memory: "geheugensensoren in de header",
+    warning_entity_header_cpu_temperature: "CPU-temperatuursensoren in de header",
+    warning_entity_header_temperature: "temperatuursensoren in de header",
+    type_switch: "Switch",
+    type_gateway: "Gateway",
+    type_access_point: "Access Point"
+  },
+  fr: {
+    // Card states
+    select_device: "Veuillez s\xE9lectionner un appareil UniFi dans l'\xE9diteur de carte.",
+    loading: "Chargement des donn\xE9es\u2026",
+    no_data: "Aucune donn\xE9e disponible.",
+    no_ports: "Aucun port d\xE9tect\xE9.",
+    // Front panel
+    front_panel: "Panneau avant",
+    product_image: "image du produit",
+    product_image_official: "Vue produit officielle Ubiquiti",
+    cpu_utilization: "Utilisation CPU",
+    cpu_temperature: "Temp\xE9rature CPU",
+    memory_utilization: "Utilisation m\xE9moire",
+    temperature: "Temp\xE9rature",
+    // Port detail
+    link_status: "\xC9tat du lien",
+    ap_status: "Statut AP",
+    mesh_signal: "Signal maill\xE9",
+    signal_weak: "Faible",
+    signal_fair: "Moyen",
+    signal_good: "Bon",
+    signal_excellent: "Excellent",
+    link_lan: "Lien LAN",
+    link_mesh: "Lien Mesh",
+    uplink: "Uplink",
+    uptime: "Disponibilit\xE9",
+    clients: "Clients",
+    speed: "Vitesse",
+    poe: "PoE",
+    poe_power: "Puissance PoE",
+    connected: "Connect\xE9",
+    no_link: "Pas de lien",
+    online: "En ligne",
+    offline: "Hors ligne",
+    // Actions
+    port_disable: "D\xE9sactiver le port",
+    port_enable: "Activer le port",
+    confirm_disable_port_title: "D\xE9sactiver le port ?",
+    confirm_disable_port_message: "Voulez-vous vraiment d\xE9sactiver {port} ?",
+    confirm_yes: "Oui",
+    confirm_no: "Non",
+    poe_off: "PoE d\xE9sactiv\xE9",
+    poe_on: "PoE activ\xE9",
+    power_cycle: "Red\xE9marrage PoE",
+    reboot: "Red\xE9marrer",
+    led_on: "LED activ\xE9e",
+    led_off: "LED d\xE9sactiv\xE9e",
+    // Hints
+    speed_disabled: "Entit\xE9 de vitesse d\xE9sactiv\xE9e \u2014 activez-la dans HA pour afficher la vitesse.",
+    telemetry_unavailable_title: "T\xE9l\xE9m\xE9trie non disponible",
+    telemetry_unavailable_body: "L'appareil s\xE9lectionn\xE9 ne fournit pas les donn\xE9es de t\xE9l\xE9m\xE9trie suivantes ; ces valeurs ne sont donc pas affich\xE9es dans l'en-t\xEAte.",
+    // Editor
+    editor_device_title: "Appareil",
+    editor_device_label: "Appareil UniFi",
+    editor_device_loading: "Chargement des appareils\u2026",
+    editor_device_select: "S\xE9lectionner un appareil\u2026",
+    editor_name_toggle_label: "Nom affich\xE9",
+    editor_name_toggle_text: "Afficher le nom dans l\u2019en-t\xEAte de la carte",
+    editor_name_toggle_hint: "Activ\xE9 par d\xE9faut. Si d\xE9sactiv\xE9, seule la ligne mod\xE8le/firmware est affich\xE9e.",
+    editor_name_label: "Nom d'affichage",
+    editor_name_hint: "Optionnel \u2014 par d\xE9faut le nom de l'appareil",
+    editor_telemetry_toggle_label: "T\xE9l\xE9m\xE9trie d\u2019en-t\xEAte",
+    editor_telemetry_toggle_text: "Afficher les donn\xE9es de t\xE9l\xE9m\xE9trie dans l\u2019en-t\xEAte",
+    editor_telemetry_toggle_hint: "Activ\xE9 par d\xE9faut. D\xE9sactivez pour masquer les lignes CPU, m\xE9moire et temp\xE9rature dans l\u2019en-t\xEAte.",
+    editor_product_image_toggle_label: "Vue du produit",
+    editor_product_image_toggle_text: "Afficher la v\xE9ritable image du produit",
+    editor_product_image_available: "Une image officielle Ubiquiti est disponible pour {model}. Elle sera charg\xE9e depuis le CDN d'images Ubiquiti.",
+    editor_product_image_unavailable: "Aucune image officielle exacte n'est encore associ\xE9e \xE0 ce mod\xE8le. Vous pouvez tout de m\xEAme saisir une image personnalis\xE9e ci-dessous.",
+    editor_product_image_url_label: "Image personnalis\xE9e (facultatif)",
+    editor_product_image_url_hint: "Remplace l'image officielle. Utilisez une URL HTTPS, un chemin /local/ ou /api/, ou une URL de donn\xE9es d'image.",
+    editor_panel_toggle_label: "Panneau avant",
+    editor_panel_toggle_text: "Afficher la vue mat\xE9rielle du panneau avant",
+    editor_panel_toggle_hint: "Activ\xE9 par d\xE9faut. D\xE9sactivez pour masquer la vue visuelle des ports.",
+    editor_dynamic_port_details_label: "D\xE9tails de port dynamiques",
+    editor_dynamic_port_details_text: "Afficher les d\xE9tails \xE0 la s\xE9lection",
+    editor_dynamic_port_details_hint: "D\xE9marre sans port s\xE9lectionn\xE9. Cliquez sur un port pour afficher ses d\xE9tails, puis \xE0 nouveau pour les masquer.",
+    editor_ports_per_row_label: "Ports par ligne (optionnel)",
+    editor_ports_per_row_hint: "Uniquement pour les switches. Laissez vide pour la mise en page automatique ou d\xE9finissez un nombre (ex. 4, 6, 8, 12).",
+    editor_force_sequential_ports_label: "Forcer l\u2019ordre s\xE9quentiel des ports",
+    editor_force_sequential_ports_hint: "D\xE9sactive l\u2019affichage impair/pair et conserve l\u2019ordre num\xE9rique naturel des ports.",
+    editor_edit_special_ports_toggle: "Modifier les ports sp\xE9ciaux",
+    editor_edit_special_ports_toggle_hint: "Activez pour afficher les s\xE9lecteurs WAN/WAN2 et choisir quels ports apparaissent dans la ligne sp\xE9ciale sup\xE9rieure.",
+    editor_custom_special_ports_label: "Ports sp\xE9ciaux (ligne du haut)",
+    editor_custom_special_ports_hint: "Cliquez pour basculer les ports de la ligne sp\xE9ciale sup\xE9rieure. Les ports non s\xE9lectionn\xE9s passent dans la grille normale.",
+    editor_trust_link_speed_ports_label: "Faire confiance au d\xE9bit de liaison 10 Mbit/s",
+    editor_trust_link_speed_ports_hint: "S\xE9lectionnez uniquement les ports avec une v\xE9ritable connexion \xE0 10 Mbit/s. Cela d\xE9sactive la protection contre les liaisons signal\xE9es \xE0 tort pour le port s\xE9lectionn\xE9.",
+    editor_port_led_blink_label: "Animation des voyants de liaison des ports",
+    editor_port_led_blink_text: "Faire clignoter les voyants des ports connect\xE9s",
+    editor_port_led_blink_rj45_text: "Faire clignoter les voyants de liaison RJ45",
+    editor_port_led_blink_sfp_text: "Faire clignoter les voyants de liaison SFP",
+    editor_port_led_blink_speed_label: "Fr\xE9quence de clignotement (1\u201310 par seconde)",
+    editor_port_led_blink_hint: "Effet visuel facultatif uniquement. L\u2019\xE9tat des ports, la d\xE9tection du trafic et les commandes restent inchang\xE9s.",
+    editor_port_size_label: "Taille des ports",
+    editor_port_size_hint: "Ajuste la taille des ports du panneau avant pour switches/passerelles.",
+    editor_ap_scale_label: "Taille AP",
+    editor_ap_scale_hint: "Ajuste la taille de l\u2019appareil AP en mode carte AP.",
+    editor_device_layout_label: "Disposition de l\u2019appareil",
+    editor_device_layout_combined: "Disposition Switch/Gateway et AP",
+    editor_device_layout_network: "Switch/Gateway uniquement",
+    editor_device_layout_ap: "AP uniquement",
+    editor_device_layout_hint: "Pour les appareils In-Wall int\xE9gr\xE9s. La disposition combin\xE9e est utilis\xE9e par d\xE9faut.",
+    editor_integrated_ports_toggle_label: "Ports int\xE9gr\xE9s",
+    editor_integrated_ports_toggle_text: "Afficher les ports du commutateur int\xE9gr\xE9",
+    editor_integrated_ports_toggle_hint: "Pour les points d\u2019acc\xE8s In-Wall compatibles. D\xE9sactivez cette option pour l\u2019affichage AP classique.",
+    editor_ap_compact_toggle_label: "Disposition AP",
+    editor_ap_compact_toggle_text: "Utiliser la vue AP compacte",
+    editor_ap_compact_toggle_hint: "Uniquement pour les points d\u2019acc\xE8s. Affiche l\u2019image AP et les d\xE9tails d\u2019\xE9tat c\xF4te \xE0 c\xF4te.",
+    editor_ap_compact_header_telemetry_label: "En-t\xEAte AP compact",
+    editor_ap_compact_header_telemetry_text: "Afficher la t\xE9l\xE9m\xE9trie dans l\u2019en-t\xEAte compact",
+    editor_ap_compact_header_telemetry_hint: "Visible uniquement en vue AP compacte. Ajoute l\u2019utilisation et la temp\xE9rature dans l\u2019en-t\xEAte.",
+    editor_mesh_signal_entity_label: "Entit\xE9 du signal maill\xE9 (facultatif)",
+    editor_mesh_signal_entity_hint: "Capteur RSSI en dBm ou de qualit\xE9 du signal en %. Laissez vide pour la d\xE9tection automatique.",
+    editor_no_devices: "Aucun switch, gateway ou point d\u2019acc\xE8s UniFi trouv\xE9 dans Home Assistant.",
+    editor_hint: "Seuls les appareils de l'int\xE9gration UniFi Network sont affich\xE9s.",
+    editor_error: "Impossible de charger les appareils UniFi.",
+    // WAN / WAN2 selector
+    editor_wan_port_label: "Port WAN",
+    editor_wan_port_auto: "Par d\xE9faut (automatique)",
+    editor_wan_port_hint: "S\xE9lectionnez le port utilis\xE9 comme WAN. Uniquement pour les passerelles.",
+    editor_wan_port_lan: "LAN",
+    editor_wan_port_sfp: "SFP",
+    editor_wan_port_sfpwan: "SFP (compatible WAN)",
+    editor_wan2_port_label: "Port WAN 2",
+    editor_wan2_port_hint: "Second port WAN/uplink optionnel. R\xE9glez sur \xAB D\xE9sactiv\xE9 \xBB si inutile.",
+    editor_wan2_port_none: "D\xE9sactiv\xE9",
+    // Raw HA state values
+    state_on: "Activ\xE9",
+    state_off: "D\xE9sactiv\xE9",
+    state_up: "Connect\xE9",
+    state_down: "Pas de lien",
+    state_connected: "Connect\xE9",
+    state_disconnected: "D\xE9connect\xE9",
+    state_true: "Connect\xE9",
+    state_false: "Pas de lien",
+    state_active: "Actif",
+    state_pending: "En attente",
+    state_firmware_mismatch: "Incompatibilit\xE9 firmware",
+    state_upgrading: "Mise \xE0 niveau",
+    state_provisioning: "Provisionnement",
+    state_heartbeat_missed: "Heartbeat manqu\xE9",
+    state_adopting: "Adoption en cours",
+    state_deleting: "Suppression en cours",
+    state_inform_error: "Erreur inform",
+    state_adoption_failed: "\xC9chec de l\u2019adoption",
+    state_isolated: "Isol\xE9",
+    // Port label prefix
+    port_label: "Port",
+    // Background color field (editor)
+    editor_bg_label: "Couleur de fond (optionnel)",
+    editor_bg_hint: "D\xE9faut : var(--card-background-color)",
+    editor_bg_opacity_label: "Transparence de la carte",
+    editor_bg_opacity_hint: "0 % = enti\xE8rement transparent, 100 % = enti\xE8rement opaque",
+    editor_colors_open: "Modifier les couleurs",
+    editor_colors_open_hint: "Ouvre l\u2019\xE9diteur avanc\xE9 avec aper\xE7u en direct et s\xE9lecteurs par zone.",
+    editor_colors_back: "Retour \xE0 l\u2019\xE9diteur",
+    editor_colors_apply: "Appliquer les couleurs",
+    editor_colors_step_hint: "Astuce : cliquez sur une zone pour ouvrir le s\xE9lecteur.",
+    editor_colors_reset_slot: "R\xE9initialiser cette couleur",
+    editor_colors_reset_all: "R\xE9initialiser toutes les couleurs",
+    editor_colors_done: "Termin\xE9",
+    editor_colors_alpha_label: "Alpha",
+    editor_colors_default_value: "Par d\xE9faut",
+    editor_color_slot_background: "Arri\xE8re-plan",
+    editor_color_slot_title: "Titre",
+    editor_color_slot_telemetry: "T\xE9l\xE9m\xE9trie",
+    editor_color_slot_label: "Libell\xE9s",
+    editor_color_slot_value: "Valeurs",
+    editor_color_slot_meta: "Mod\xE8le/Firmware",
+    editor_color_slot_port_label: "\xC9tiquettes de port",
+    editor_color_slot_special_port_label: "\xC9tiquette port sp\xE9cial",
+    editor_color_slot_ap_ring: "Anneau externe AP",
+    editor_color_slot_ap_inner: "Cercle interne AP",
+    editor_color_slot_ap_color: "Couleur AP",
+    editor_color_slot_ap_led: "LED AP (secours)",
+    editor_ap_led_color_disabled_hint: "D\xE9sactiv\xE9 car le contr\xF4le LED RGB est disponible.",
+    editor_color_slot_button: "Arri\xE8re-plan du bouton",
+    editor_color_slot_button_text: "Texte/ic\xF4ne du bouton",
+    editor_color_slot_button_secondary: "Arri\xE8re-plan du bouton secondaire",
+    editor_color_slot_button_secondary_text: "Texte/ic\xF4ne du bouton secondaire",
+    editor_color_slot_button_border: "Bordure du bouton",
+    editor_button_theme_style_label: "Utiliser les couleurs de bouton du th\xE8me",
+    editor_button_theme_style_hint: "Utilise les variables du th\xE8me Home Assistant pour l\u2019arri\xE8re-plan et les couleurs du texte/de l\u2019ic\xF4ne des boutons.",
+    editor_button_default_color_label: "Utiliser les couleurs de bouton par d\xE9faut",
+    editor_button_default_color_hint: "Lorsque les couleurs du th\xE8me sont d\xE9sactiv\xE9es, conserve les couleurs int\xE9gr\xE9es des boutons sauf si les couleurs personnalis\xE9es sont activ\xE9es.",
+    // Entity warning
+    warning_checking: "V\xE9rification des entit\xE9s UniFi d\xE9sactiv\xE9es ou masqu\xE9es pour l'appareil s\xE9lectionn\xE9\u2026",
+    warning_title: "Entit\xE9s UniFi d\xE9sactiv\xE9es ou masqu\xE9es d\xE9tect\xE9es",
+    warning_body: "L'appareil s\xE9lectionn\xE9 poss\xE8de des entit\xE9s UniFi pertinentes actuellement d\xE9sactiv\xE9es ou masqu\xE9es. Cela peut entra\xEEner des commandes manquantes, une t\xE9l\xE9m\xE9trie incompl\xE8te ou un \xE9tat de port incorrect dans la carte.",
+    warning_status: "R\xE9sum\xE9 : {disabled} d\xE9sactiv\xE9e(s), {hidden} masqu\xE9e(s).",
+    warning_check_in: "V\xE9rifier dans Home Assistant sous :",
+    warning_ha_path: "Param\xE8tres \u2192 Appareils &amp; Services \u2192 UniFi \u2192 Appareils / Entit\xE9s",
+    warning_entity_port_switch: "entit\xE9s de commutateur de port",
+    warning_entity_poe_switch: "entit\xE9s de commutateur PoE",
+    warning_entity_poe_power: "capteurs de puissance PoE",
+    warning_entity_link_speed: "capteurs de vitesse de lien",
+    warning_entity_rx_tx: "capteurs RX/TX",
+    warning_entity_power_cycle: "boutons de red\xE9marrage PoE",
+    warning_entity_link: "entit\xE9s de lien",
+    warning_entity_header_cpu: "capteurs CPU d\u2019en-t\xEAte",
+    warning_entity_header_memory: "capteurs m\xE9moire d\u2019en-t\xEAte",
+    warning_entity_header_cpu_temperature: "capteurs de temp\xE9rature CPU d\u2019en-t\xEAte",
+    warning_entity_header_temperature: "capteurs de temp\xE9rature d\u2019en-t\xEAte",
+    type_switch: "Switch",
+    type_gateway: "Passerelle",
+    type_access_point: "Point d\u2019acc\xE8s"
+  },
+  es: {
+    // Card states
+    select_device: "Selecciona un dispositivo UniFi en el editor de tarjetas.",
+    loading: "Cargando datos del dispositivo\u2026",
+    no_data: "No hay datos del dispositivo.",
+    no_ports: "No se detectaron puertos.",
+    // Front panel
+    front_panel: "Panel frontal",
+    product_image: "imagen del producto",
+    product_image_official: "Vista oficial del producto Ubiquiti",
+    cpu_utilization: "Uso de CPU",
+    cpu_temperature: "Temperatura de CPU",
+    memory_utilization: "Uso de memoria",
+    temperature: "Temperatura",
+    // Port detail
+    link_status: "Estado del enlace",
+    ap_status: "Estado del AP",
+    mesh_signal: "Se\xF1al mesh",
+    signal_weak: "D\xE9bil",
+    signal_fair: "Aceptable",
+    signal_good: "Buena",
+    signal_excellent: "Excelente",
+    link_lan: "Enlace LAN",
+    link_mesh: "Enlace Mesh",
+    uplink: "Uplink",
+    uptime: "Tiempo activo",
+    clients: "Clientes",
+    speed: "Velocidad",
+    poe: "PoE",
+    poe_power: "Potencia PoE",
+    connected: "Conectado",
+    no_link: "Sin enlace",
+    online: "En l\xEDnea",
+    offline: "Sin conexi\xF3n",
+    // Actions
+    port_disable: "Desactivar puerto",
+    port_enable: "Activar puerto",
+    confirm_disable_port_title: "\xBFDesactivar puerto?",
+    confirm_disable_port_message: "\xBFSeguro que quieres desactivar {port}?",
+    confirm_yes: "S\xED",
+    confirm_no: "No",
+    poe_off: "PoE apagado",
+    poe_on: "PoE encendido",
+    power_cycle: "Reinicio PoE",
+    reboot: "Reiniciar",
+    led_on: "LED encendido",
+    led_off: "LED apagado",
+    // Hints
+    speed_disabled: "Entidad de velocidad deshabilitada \u2014 act\xEDvala en HA para mostrar la velocidad de enlace.",
+    telemetry_unavailable_title: "Telemetr\xEDa no disponible",
+    telemetry_unavailable_body: "El dispositivo seleccionado no proporciona los siguientes datos de telemetr\xEDa, por lo que estos valores no se muestran en el encabezado.",
+    // Editor
+    editor_device_title: "Dispositivo",
+    editor_device_label: "Dispositivo UniFi",
+    editor_device_loading: "Cargando dispositivos desde Home Assistant\u2026",
+    editor_device_select: "Seleccionar dispositivo\u2026",
+    editor_name_toggle_label: "Nombre mostrado",
+    editor_name_toggle_text: "Mostrar nombre en el encabezado de la tarjeta",
+    editor_name_toggle_hint: "Activado por defecto. Si se desactiva, solo se muestra la l\xEDnea de modelo/firmware.",
+    editor_name_label: "Nombre para mostrar",
+    editor_name_hint: "Opcional \u2014 por defecto, el nombre del dispositivo",
+    editor_telemetry_toggle_label: "Telemetr\xEDa del encabezado",
+    editor_telemetry_toggle_text: "Mostrar datos de telemetr\xEDa en el encabezado",
+    editor_telemetry_toggle_hint: "Activado por defecto. Desact\xEDvalo para ocultar CPU, memoria y temperatura en el encabezado.",
+    editor_product_image_toggle_label: "Vista del producto",
+    editor_product_image_toggle_text: "Mostrar la imagen real del producto",
+    editor_product_image_available: "Hay una imagen oficial de Ubiquiti para {model}. Al activarla se carga desde el CDN de im\xE1genes de Ubiquiti.",
+    editor_product_image_unavailable: "Todav\xEDa no hay una imagen oficial exacta para este modelo. Puedes introducir una imagen personalizada abajo.",
+    editor_product_image_url_label: "Imagen personalizada (opcional)",
+    editor_product_image_url_hint: "Sustituye la imagen oficial. Usa una URL HTTPS, una ruta /local/ o /api/, o una URL de datos de imagen.",
+    editor_panel_toggle_label: "Panel frontal",
+    editor_panel_toggle_text: "Mostrar vista de hardware del panel frontal",
+    editor_panel_toggle_hint: "Activado por defecto. Desact\xEDvalo para ocultar la vista visual del panel.",
+    editor_dynamic_port_details_label: "Detalles de puerto din\xE1micos",
+    editor_dynamic_port_details_text: "Mostrar detalles al seleccionar",
+    editor_dynamic_port_details_hint: "Comienza sin ning\xFAn puerto seleccionado. Haz clic en un puerto para ver sus detalles y otra vez para ocultarlos.",
+    editor_ports_per_row_label: "Puertos por fila (opcional)",
+    editor_ports_per_row_hint: "Solo para switches. D\xE9jalo vac\xEDo para dise\xF1o autom\xE1tico o define un n\xFAmero (p. ej. 4, 6, 8, 12).",
+    editor_force_sequential_ports_label: "Forzar puertos secuenciales",
+    editor_force_sequential_ports_hint: "Desactiva la distribuci\xF3n impar/par y mantiene el orden num\xE9rico natural de puertos.",
+    editor_edit_special_ports_toggle: "Editar puertos especiales",
+    editor_edit_special_ports_toggle_hint: "Activa para mostrar selectores WAN/WAN2 y elegir qu\xE9 puertos aparecen en la fila especial superior.",
+    editor_custom_special_ports_label: "Puertos especiales (fila superior)",
+    editor_custom_special_ports_hint: "Haz clic para alternar puertos en la fila especial superior. Los no seleccionados pasan a la cuadr\xEDcula normal.",
+    editor_trust_link_speed_ports_label: "Confiar en enlaces de 10 Mbit/s por puerto",
+    editor_trust_link_speed_ports_hint: "Selecciona solo puertos con una conexi\xF3n real de 10 Mbit/s. Esto desactiva la protecci\xF3n contra enlaces notificados err\xF3neamente para el puerto seleccionado.",
+    editor_port_led_blink_label: "Animaci\xF3n LED de enlace de puertos",
+    editor_port_led_blink_text: "Hacer parpadear los LED de los puertos conectados",
+    editor_port_led_blink_rj45_text: "Hacer parpadear los LED de enlace RJ45",
+    editor_port_led_blink_sfp_text: "Hacer parpadear los LED de enlace SFP",
+    editor_port_led_blink_speed_label: "Velocidad de parpadeo (1\u201310 por segundo)",
+    editor_port_led_blink_hint: "Solo es un efecto visual opcional. El estado de los puertos, la detecci\xF3n de tr\xE1fico y los controles no cambian.",
+    editor_port_size_label: "Tama\xF1o de puerto",
+    editor_port_size_hint: "Ajusta el tama\xF1o de puertos del panel frontal para switches y gateways.",
+    editor_ap_scale_label: "Tama\xF1o AP",
+    editor_ap_scale_hint: "Escala el tama\xF1o del dispositivo AP en modo tarjeta AP.",
+    editor_device_layout_label: "Dise\xF1o del dispositivo",
+    editor_device_layout_combined: "Dise\xF1o Switch/Gateway y AP",
+    editor_device_layout_network: "Solo Switch/Gateway",
+    editor_device_layout_ap: "Solo AP",
+    editor_device_layout_hint: "Para dispositivos In-Wall integrados. El dise\xF1o combinado es el predeterminado.",
+    editor_integrated_ports_toggle_label: "Puertos integrados",
+    editor_integrated_ports_toggle_text: "Mostrar los puertos del switch integrado",
+    editor_integrated_ports_toggle_hint: "Para puntos de acceso In-Wall compatibles. Desact\xEDvalo para usar la vista cl\xE1sica solo de AP.",
+    editor_ap_compact_toggle_label: "Dise\xF1o AP",
+    editor_ap_compact_toggle_text: "Usar vista AP compacta",
+    editor_ap_compact_toggle_hint: "Solo para puntos de acceso. Muestra la imagen del AP y los detalles de estado lado a lado.",
+    editor_ap_compact_header_telemetry_label: "Encabezado AP compacto",
+    editor_ap_compact_header_telemetry_text: "Mostrar telemetr\xEDa en el encabezado compacto",
+    editor_ap_compact_header_telemetry_hint: "Solo visible en vista AP compacta. A\xF1ade uso y temperatura en el encabezado.",
+    editor_mesh_signal_entity_label: "Entidad de se\xF1al mesh (opcional)",
+    editor_mesh_signal_entity_hint: "Sensor con RSSI en dBm o calidad de se\xF1al en %. D\xE9jalo vac\xEDo para la detecci\xF3n autom\xE1tica.",
+    editor_no_devices: "No se encontraron switches, gateways o puntos de acceso UniFi en Home Assistant.",
+    editor_hint: "Solo se muestran dispositivos de la integraci\xF3n UniFi Network.",
+    editor_error: "No se pudieron cargar los dispositivos UniFi.",
+    // WAN / WAN2 selector
+    editor_wan_port_label: "Puerto WAN",
+    editor_wan_port_auto: "Predeterminado (autom\xE1tico)",
+    editor_wan_port_hint: "Selecciona qu\xE9 puerto se usa como WAN. Solo para gateways.",
+    editor_wan_port_lan: "LAN",
+    editor_wan_port_sfp: "SFP",
+    editor_wan_port_sfpwan: "SFP (compatible con WAN)",
+    editor_wan2_port_label: "Puerto WAN 2",
+    editor_wan2_port_hint: "Segundo puerto WAN/uplink opcional. Ponlo en \xABDeshabilitado\xBB si no se usa.",
+    editor_wan2_port_none: "Deshabilitado",
+    // Raw HA state values
+    state_on: "Encendido",
+    state_off: "Apagado",
+    state_up: "Conectado",
+    state_down: "Sin enlace",
+    state_connected: "Conectado",
+    state_disconnected: "Desconectado",
+    state_true: "Conectado",
+    state_false: "Sin enlace",
+    state_active: "Activo",
+    state_pending: "Pendiente",
+    state_firmware_mismatch: "Firmware incompatible",
+    state_upgrading: "Actualizando",
+    state_provisioning: "Provisionando",
+    state_heartbeat_missed: "Heartbeat perdido",
+    state_adopting: "Adoptando",
+    state_deleting: "Eliminando",
+    state_inform_error: "Error de inform",
+    state_adoption_failed: "Adopci\xF3n fallida",
+    state_isolated: "Aislado",
+    // Port label prefix
+    port_label: "Puerto",
+    // Background color field (editor)
+    editor_bg_label: "Color de fondo (opcional)",
+    editor_bg_hint: "Predeterminado: var(--card-background-color)",
+    editor_bg_opacity_label: "Transparencia de la tarjeta",
+    editor_bg_opacity_hint: "0% = totalmente transparente, 100% = totalmente opaco",
+    editor_colors_open: "Cambiar colores",
+    editor_colors_open_hint: "Abre el editor avanzado con vista previa en vivo y selectores por zona.",
+    editor_colors_back: "Volver al editor",
+    editor_colors_apply: "Aplicar colores",
+    editor_colors_step_hint: "Consejo: haz clic en una zona para abrir el selector de color.",
+    editor_colors_reset_slot: "Restablecer este color",
+    editor_colors_reset_all: "Restablecer todos los colores",
+    editor_colors_done: "Listo",
+    editor_colors_alpha_label: "Alfa",
+    editor_colors_default_value: "Predeterminado",
+    editor_color_slot_background: "Fondo",
+    editor_color_slot_title: "T\xEDtulo",
+    editor_color_slot_telemetry: "Telemetr\xEDa",
+    editor_color_slot_label: "Etiquetas",
+    editor_color_slot_value: "Valores",
+    editor_color_slot_meta: "Modelo/Firmware",
+    editor_color_slot_port_label: "Etiquetas de puerto",
+    editor_color_slot_special_port_label: "Etiqueta de puerto especial",
+    editor_color_slot_ap_ring: "Anillo exterior AP",
+    editor_color_slot_ap_inner: "C\xEDrculo interior AP",
+    editor_color_slot_ap_color: "Color AP",
+    editor_color_slot_ap_led: "LED AP (respaldo)",
+    editor_ap_led_color_disabled_hint: "Desactivado porque hay control RGB LED disponible.",
+    editor_color_slot_button: "Fondo del bot\xF3n",
+    editor_color_slot_button_text: "Texto/icono del bot\xF3n",
+    editor_color_slot_button_secondary: "Fondo del bot\xF3n secundario",
+    editor_color_slot_button_secondary_text: "Texto/icono del bot\xF3n secundario",
+    editor_color_slot_button_border: "Borde del bot\xF3n",
+    editor_button_theme_style_label: "Usar colores de bot\xF3n del tema",
+    editor_button_theme_style_hint: "Usa variables del tema de Home Assistant para el fondo y los colores de texto/icono de los botones.",
+    editor_button_default_color_label: "Usar colores de bot\xF3n predeterminados",
+    editor_button_default_color_hint: "Cuando los colores del tema est\xE1n desactivados, mantiene los colores integrados de los botones salvo que est\xE9n activados los colores personalizados.",
+    // Entity warning
+    warning_checking: "Comprobando entidades UniFi deshabilitadas u ocultas en el dispositivo seleccionado\u2026",
+    warning_title: "Se detectaron entidades UniFi deshabilitadas u ocultas",
+    warning_body: "El dispositivo seleccionado tiene entidades UniFi relevantes que est\xE1n deshabilitadas u ocultas. Esto puede causar controles faltantes, telemetr\xEDa incompleta o estado de puertos incorrecto en la tarjeta.",
+    warning_status: "Resumen: {disabled} deshabilitadas, {hidden} ocultas.",
+    warning_check_in: "Comprobar en Home Assistant en:",
+    warning_ha_path: "Ajustes \u2192 Dispositivos y servicios \u2192 UniFi \u2192 Dispositivos / Entidades",
+    warning_entity_port_switch: "entidades de conmutaci\xF3n de puerto",
+    warning_entity_poe_switch: "entidades de conmutaci\xF3n PoE",
+    warning_entity_poe_power: "sensores de potencia PoE",
+    warning_entity_link_speed: "sensores de velocidad de enlace",
+    warning_entity_rx_tx: "sensores RX/TX",
+    warning_entity_power_cycle: "botones de reinicio PoE",
+    warning_entity_link: "entidades de enlace",
+    warning_entity_header_cpu: "sensores de CPU del encabezado",
+    warning_entity_header_memory: "sensores de memoria del encabezado",
+    warning_entity_header_cpu_temperature: "sensores de temperatura de CPU del encabezado",
+    warning_entity_header_temperature: "sensores de temperatura del encabezado",
+    type_switch: "Switch",
+    type_gateway: "Gateway",
+    type_access_point: "Punto de acceso"
+  },
+  it: {
+    // Card states
+    select_device: "Seleziona un dispositivo UniFi nell\u2019editor della card.",
+    loading: "Caricamento dati dispositivo\u2026",
+    no_data: "Nessun dato dispositivo disponibile.",
+    no_ports: "Nessuna porta rilevata.",
+    // Front panel
+    front_panel: "Pannello frontale",
+    product_image: "immagine del prodotto",
+    product_image_official: "Vista prodotto ufficiale Ubiquiti",
+    cpu_utilization: "Utilizzo CPU",
+    cpu_temperature: "Temperatura CPU",
+    memory_utilization: "Utilizzo memoria",
+    temperature: "Temperatura",
+    // Port detail
+    link_status: "Stato collegamento",
+    ap_status: "Stato AP",
+    mesh_signal: "Segnale mesh",
+    signal_weak: "Debole",
+    signal_fair: "Discreto",
+    signal_good: "Buono",
+    signal_excellent: "Eccellente",
+    link_lan: "Link LAN",
+    link_mesh: "Link Mesh",
+    uplink: "Uplink",
+    uptime: "Uptime",
+    clients: "Client",
+    speed: "Velocit\xE0",
+    poe: "PoE",
+    poe_power: "Potenza PoE",
+    connected: "Connesso",
+    no_link: "Nessun link",
+    online: "Online",
+    offline: "Offline",
+    // Actions
+    port_disable: "Disattiva porta",
+    port_enable: "Attiva porta",
+    confirm_disable_port_title: "Disattivare la porta?",
+    confirm_disable_port_message: "Vuoi davvero disattivare {port}?",
+    confirm_yes: "S\xEC",
+    confirm_no: "No",
+    poe_off: "PoE spento",
+    poe_on: "PoE acceso",
+    power_cycle: "Riavvio PoE",
+    reboot: "Riavvia",
+    led_on: "LED acceso",
+    led_off: "LED spento",
+    // Hints
+    speed_disabled: "Entit\xE0 velocit\xE0 disabilitata \u2014 abilitala in HA per mostrare la velocit\xE0 del link.",
+    telemetry_unavailable_title: "Telemetria non disponibile",
+    telemetry_unavailable_body: "Il dispositivo selezionato non fornisce i seguenti dati di telemetria, quindi questi valori non vengono mostrati nell\u2019header.",
+    // Editor
+    editor_device_title: "Dispositivo",
+    editor_device_label: "Dispositivo UniFi",
+    editor_device_loading: "Caricamento dispositivi da Home Assistant\u2026",
+    editor_device_select: "Seleziona dispositivo\u2026",
+    editor_name_toggle_label: "Nome visualizzato",
+    editor_name_toggle_text: "Mostra il nome nell\u2019intestazione della card",
+    editor_name_toggle_hint: "Abilitato per default. Se disabilitato, viene mostrata solo la riga modello/firmware.",
+    editor_name_label: "Nome visualizzato",
+    editor_name_hint: "Opzionale \u2014 per impostazione predefinita il nome del dispositivo",
+    editor_telemetry_toggle_label: "Telemetria header",
+    editor_telemetry_toggle_text: "Mostra i dati di telemetria nell\u2019header",
+    editor_telemetry_toggle_hint: "Abilitato per default. Disattiva per nascondere CPU, memoria e temperatura nell\u2019header.",
+    editor_product_image_toggle_label: "Vista prodotto",
+    editor_product_image_toggle_text: "Mostra l'immagine reale del prodotto",
+    editor_product_image_available: "\xC8 disponibile un'immagine ufficiale Ubiquiti per {model}. Attivandola verr\xE0 caricata dal CDN immagini di Ubiquiti.",
+    editor_product_image_unavailable: "Per questo modello non \xE8 ancora disponibile un'associazione ufficiale esatta. \xC8 comunque possibile inserire un'immagine personalizzata qui sotto.",
+    editor_product_image_url_label: "Immagine personalizzata (opzionale)",
+    editor_product_image_url_hint: "Sostituisce l'immagine ufficiale. Usa un URL HTTPS, un percorso /local/ o /api/, oppure un data URL immagine.",
+    editor_panel_toggle_label: "Pannello frontale",
+    editor_panel_toggle_text: "Mostra la vista hardware del pannello frontale",
+    editor_panel_toggle_hint: "Abilitato per default. Disattivalo per nascondere la vista visiva dei porti.",
+    editor_dynamic_port_details_label: "Dettagli porta dinamici",
+    editor_dynamic_port_details_text: "Mostra dettagli alla selezione",
+    editor_dynamic_port_details_hint: "Inizia senza una porta selezionata. Fai clic su una porta per i dettagli e di nuovo per nasconderli.",
+    editor_ports_per_row_label: "Porte per riga (opzionale)",
+    editor_ports_per_row_hint: "Solo per switch. Lascia vuoto per layout automatico o imposta un numero (es. 4, 6, 8, 12).",
+    editor_force_sequential_ports_label: "Forza porte sequenziali",
+    editor_force_sequential_ports_hint: "Disattiva il layout dispari/pari e mantiene le porte nell\u2019ordine numerico naturale.",
+    editor_edit_special_ports_toggle: "Modifica porte speciali",
+    editor_edit_special_ports_toggle_hint: "Abilita per mostrare i selettori WAN/WAN2 e scegliere quali porte appaiono nella riga speciale superiore.",
+    editor_custom_special_ports_label: "Porte speciali (riga superiore)",
+    editor_custom_special_ports_hint: "Clicca per attivare/disattivare le porte nella riga speciale superiore. Le porte non selezionate passano alla griglia normale.",
+    editor_trust_link_speed_ports_label: "Considera attendibile il link a 10 Mbit/s",
+    editor_trust_link_speed_ports_hint: "Seleziona solo porte con una connessione reale a 10 Mbit/s. Questa opzione disattiva la protezione dai link segnalati erroneamente per la porta selezionata.",
+    editor_port_led_blink_label: "Animazione LED di collegamento delle porte",
+    editor_port_led_blink_text: "Fai lampeggiare i LED delle porte connesse",
+    editor_port_led_blink_rj45_text: "Fai lampeggiare i LED di collegamento RJ45",
+    editor_port_led_blink_sfp_text: "Fai lampeggiare i LED di collegamento SFP",
+    editor_port_led_blink_speed_label: "Velocit\xE0 di lampeggio (1\u201310 al secondo)",
+    editor_port_led_blink_hint: "Solo un effetto visivo opzionale. Stato delle porte, rilevamento del traffico e controlli restano invariati.",
+    editor_port_size_label: "Dimensione porta",
+    editor_port_size_hint: "Regola la dimensione delle porte del pannello frontale per switch e gateway.",
+    editor_ap_scale_label: "Dimensione AP",
+    editor_ap_scale_hint: "Scala la dimensione del dispositivo AP in modalit\xE0 card AP.",
+    editor_device_layout_label: "Layout dispositivo",
+    editor_device_layout_combined: "Layout Switch/Gateway e AP",
+    editor_device_layout_network: "Solo Switch/Gateway",
+    editor_device_layout_ap: "Solo AP",
+    editor_device_layout_hint: "Per dispositivi In-Wall integrati. Il layout combinato \xE8 quello predefinito.",
+    editor_integrated_ports_toggle_label: "Porte integrate",
+    editor_integrated_ports_toggle_text: "Mostra le porte dello switch integrato",
+    editor_integrated_ports_toggle_hint: "Per access point In-Wall compatibili. Disattiva questa opzione per la visualizzazione AP classica.",
+    editor_ap_compact_toggle_label: "Layout AP",
+    editor_ap_compact_toggle_text: "Usa vista AP compatta",
+    editor_ap_compact_toggle_hint: "Solo per access point. Mostra immagine AP e dettagli di stato affiancati.",
+    editor_ap_compact_header_telemetry_label: "Header AP compatto",
+    editor_ap_compact_header_telemetry_text: "Mostra telemetria nell\u2019header compatto",
+    editor_ap_compact_header_telemetry_hint: "Visibile solo nella vista AP compatta. Aggiunge utilizzo e temperatura nell\u2019header.",
+    editor_mesh_signal_entity_label: "Entit\xE0 del segnale mesh (opzionale)",
+    editor_mesh_signal_entity_hint: "Sensore con RSSI in dBm o qualit\xE0 del segnale in %. Lascia vuoto per il rilevamento automatico.",
+    editor_no_devices: "Nessuno switch, gateway o access point UniFi trovato in Home Assistant.",
+    editor_hint: "Vengono mostrati solo i dispositivi dell\u2019integrazione UniFi Network.",
+    editor_error: "Impossibile caricare i dispositivi UniFi.",
+    // WAN / WAN2 selector
+    editor_wan_port_label: "Porta WAN",
+    editor_wan_port_auto: "Predefinita (automatica)",
+    editor_wan_port_hint: "Seleziona quale porta usare come WAN. Solo per dispositivi gateway.",
+    editor_wan_port_lan: "LAN",
+    editor_wan_port_sfp: "SFP",
+    editor_wan_port_sfpwan: "SFP (compatibile WAN)",
+    editor_wan2_port_label: "Porta WAN 2",
+    editor_wan2_port_hint: "Seconda porta WAN/uplink opzionale. Imposta su \xABDisabilitata\xBB se non necessaria.",
+    editor_wan2_port_none: "Disabilitata",
+    // Raw HA state values
+    state_on: "Acceso",
+    state_off: "Spento",
+    state_up: "Connesso",
+    state_down: "Nessun link",
+    state_connected: "Connesso",
+    state_disconnected: "Disconnesso",
+    state_true: "Connesso",
+    state_false: "Nessun link",
+    state_active: "Attivo",
+    state_pending: "In attesa",
+    state_firmware_mismatch: "Firmware non compatibile",
+    state_upgrading: "Aggiornamento",
+    state_provisioning: "Provisioning",
+    state_heartbeat_missed: "Heartbeat perso",
+    state_adopting: "Adozione in corso",
+    state_deleting: "Eliminazione in corso",
+    state_inform_error: "Errore inform",
+    state_adoption_failed: "Adozione fallita",
+    state_isolated: "Isolato",
+    // Port label prefix
+    port_label: "Porta",
+    // Background color field (editor)
+    editor_bg_label: "Colore sfondo (opzionale)",
+    editor_bg_hint: "Predefinito: var(--card-background-color)",
+    editor_bg_opacity_label: "Trasparenza scheda",
+    editor_bg_opacity_hint: "0% = completamente trasparente, 100% = completamente opaco",
+    editor_colors_open: "Cambia colori",
+    editor_colors_open_hint: "Apre l\u2019editor avanzato con anteprima live e picker per area.",
+    editor_colors_back: "Torna all\u2019editor",
+    editor_colors_apply: "Applica colori",
+    editor_colors_step_hint: "Suggerimento: clicca un\u2019area per aprire il color picker.",
+    editor_colors_reset_slot: "Reimposta questo colore",
+    editor_colors_reset_all: "Reimposta tutti i colori",
+    editor_colors_done: "Fatto",
+    editor_colors_alpha_label: "Alpha",
+    editor_colors_default_value: "Predefinito",
+    editor_color_slot_background: "Sfondo",
+    editor_color_slot_title: "Titolo",
+    editor_color_slot_telemetry: "Telemetria",
+    editor_color_slot_label: "Etichette",
+    editor_color_slot_value: "Valori",
+    editor_color_slot_meta: "Modello/Firmware",
+    editor_color_slot_port_label: "Etichette porte",
+    editor_color_slot_special_port_label: "Etichetta porta speciale",
+    editor_color_slot_ap_ring: "Anello esterno AP",
+    editor_color_slot_ap_inner: "Cerchio interno AP",
+    editor_color_slot_ap_color: "Colore AP",
+    editor_color_slot_ap_led: "LED AP (fallback)",
+    editor_ap_led_color_disabled_hint: "Disattivato perch\xE9 \xE8 disponibile il controllo LED RGB.",
+    editor_color_slot_button: "Sfondo pulsante",
+    editor_color_slot_button_text: "Testo/icona pulsante",
+    editor_color_slot_button_secondary: "Sfondo pulsante secondario",
+    editor_color_slot_button_secondary_text: "Testo/icona pulsante secondario",
+    editor_color_slot_button_border: "Bordo pulsante",
+    editor_button_theme_style_label: "Usa colori pulsante del tema",
+    editor_button_theme_style_hint: "Usa le variabili del tema Home Assistant per lo sfondo e i colori di testo/icona dei pulsanti.",
+    editor_button_default_color_label: "Usa colori pulsante predefiniti",
+    editor_button_default_color_hint: "Quando i colori del tema sono disattivati, mantiene i colori pulsante integrati della card salvo che i colori personalizzati siano attivi.",
+    // Entity warning
+    warning_checking: "Controllo entit\xE0 UniFi disabilitate o nascoste per il dispositivo selezionato\u2026",
+    warning_title: "Rilevate entit\xE0 UniFi disabilitate o nascoste",
+    warning_body: "Il dispositivo selezionato ha entit\xE0 UniFi rilevanti attualmente disabilitate o nascoste. Questo pu\xF2 causare controlli mancanti, telemetria incompleta o stato porte non corretto nella card.",
+    warning_status: "Riepilogo: {disabled} disabilitate, {hidden} nascoste.",
+    warning_check_in: "Controlla in Home Assistant in:",
+    warning_ha_path: "Impostazioni \u2192 Dispositivi e servizi \u2192 UniFi \u2192 Dispositivi / Entit\xE0",
+    warning_entity_port_switch: "entit\xE0 switch porta",
+    warning_entity_poe_switch: "entit\xE0 switch PoE",
+    warning_entity_poe_power: "sensori potenza PoE",
+    warning_entity_link_speed: "sensori velocit\xE0 link",
+    warning_entity_rx_tx: "sensori RX/TX",
+    warning_entity_power_cycle: "pulsanti riavvio PoE",
+    warning_entity_link: "entit\xE0 link",
+    warning_entity_header_cpu: "sensori CPU dell\u2019header",
+    warning_entity_header_memory: "sensori memoria dell\u2019header",
+    warning_entity_header_cpu_temperature: "sensori temperatura CPU dell\u2019header",
+    warning_entity_header_temperature: "sensori temperatura dell\u2019header",
+    type_switch: "Switch",
+    type_gateway: "Gateway",
+    type_access_point: "Access Point"
+  }
+};
+TRANSLATIONS.sv = {
+  ...TRANSLATIONS.en,
+  editor_port_led_blink_label: "Animering av portarnas l\xE4nklysdioder",
+  editor_port_led_blink_text: "L\xE5t l\xE4nklysdioderna f\xF6r anslutna portar blinka",
+  editor_port_led_blink_rj45_text: "L\xE5t RJ45-l\xE4nklysdioder blinka",
+  editor_port_led_blink_sfp_text: "L\xE5t SFP-l\xE4nklysdioder blinka",
+  editor_port_led_blink_speed_label: "Blinkhastighet (1\u201310 per sekund)",
+  editor_port_led_blink_hint: "Endast en valfri visuell effekt. Portstatus, trafikidentifiering och kontroller p\xE5verkas inte.",
+  editor_trust_link_speed_ports_label: "Lita p\xE5 10 Mbit/s l\xE4nkhastighet f\xF6r portar",
+  editor_trust_link_speed_ports_hint: "V\xE4lj endast portar med en verklig 10 Mbit/s-anslutning. Detta inaktiverar skyddet mot felaktigt rapporterade l\xE4nkar f\xF6r den valda porten.",
+  editor_telemetry_toggle_label: "Headertelemetri",
+  editor_telemetry_toggle_text: "Visa telemetridata i kortets header",
+  editor_telemetry_toggle_hint: "Aktiverat som standard. Inaktivera f\xF6r att d\xF6lja CPU-, minnes- och temperaturrader i headern.",
+  telemetry_unavailable_title: "Telemetri inte tillg\xE4nglig",
+  telemetry_unavailable_body: "Den valda enheten tillhandah\xE5ller inte f\xF6ljande telemetridata, d\xE4rf\xF6r visas dessa v\xE4rden inte i headern.",
+  editor_colors_open: "\xC4ndra f\xE4rger",
+  editor_colors_back: "Tillbaka till editorn",
+  editor_colors_apply: "Anv\xE4nd f\xE4rger",
+  editor_colors_reset_all: "\xC5terst\xE4ll alla f\xE4rger",
+  editor_bg_opacity_label: "Kortets transparens",
+  warning_entity_header_cpu: "CPU-sensorer i headern",
+  warning_entity_header_memory: "minnessensorer i headern",
+  warning_entity_header_cpu_temperature: "CPU-temperatursensorer i headern",
+  warning_entity_header_temperature: "temperatursensorer i headern"
+};
+TRANSLATIONS.da = {
+  ...TRANSLATIONS.en,
+  editor_port_led_blink_label: "Animation af portenes link-LED'er",
+  editor_port_led_blink_text: "Lad link-LED'er for tilsluttede porte blinke",
+  editor_port_led_blink_rj45_text: "Lad RJ45-link-LED'er blinke",
+  editor_port_led_blink_sfp_text: "Lad SFP-link-LED'er blinke",
+  editor_port_led_blink_speed_label: "Blinkhastighed (1\u201310 pr. sekund)",
+  editor_port_led_blink_hint: "Kun en valgfri visuel effekt. Portstatus, trafikregistrering og betjening forbliver u\xE6ndret.",
+  editor_trust_link_speed_ports_label: "Stol p\xE5 10 Mbit/s-linkhastighed for porte",
+  editor_trust_link_speed_ports_hint: "V\xE6lg kun porte med en \xE6gte 10 Mbit/s-forbindelse. Dette deaktiverer beskyttelsen mod fejlagtigt rapporterede links for den valgte port.",
+  editor_telemetry_toggle_label: "Headertelemetri",
+  editor_telemetry_toggle_text: "Vis telemetridata i kortets header",
+  editor_telemetry_toggle_hint: "Aktiveret som standard. Sl\xE5 fra for at skjule CPU-, hukommelses- og temperaturlinjer i headeren.",
+  telemetry_unavailable_title: "Telemetri ikke tilg\xE6ngelig",
+  telemetry_unavailable_body: "Den valgte enhed leverer ikke f\xF8lgende telemetridata, s\xE5 disse v\xE6rdier vises ikke i headeren.",
+  editor_colors_open: "Skift farver",
+  editor_colors_back: "Tilbage til editor",
+  editor_colors_apply: "Anvend farver",
+  editor_colors_reset_all: "Nulstil alle farver",
+  editor_bg_opacity_label: "Korttransparens",
+  warning_entity_header_cpu: "CPU-sensorer i headeren",
+  warning_entity_header_memory: "hukommelsessensorer i headeren",
+  warning_entity_header_cpu_temperature: "CPU-temperatursensorer i headeren",
+  warning_entity_header_temperature: "temperatursensorer i headeren"
+};
+TRANSLATIONS.no = {
+  ...TRANSLATIONS.en,
+  editor_port_led_blink_label: "Animasjon av portenes link-LED-er",
+  editor_port_led_blink_text: "La link-LED-er for tilkoblede porter blinke",
+  editor_port_led_blink_rj45_text: "La RJ45-link-LED-er blinke",
+  editor_port_led_blink_sfp_text: "La SFP-link-LED-er blinke",
+  editor_port_led_blink_speed_label: "Blinkhastighet (1\u201310 per sekund)",
+  editor_port_led_blink_hint: "Kun en valgfri visuell effekt. Portstatus, trafikkregistrering og kontroller forblir uendret.",
+  editor_trust_link_speed_ports_label: "Stol p\xE5 10 Mbit/s-linkhastighet for porter",
+  editor_trust_link_speed_ports_hint: "Velg bare porter med en reell 10 Mbit/s-forbindelse. Dette deaktiverer beskyttelsen mot feilrapporterte linker for den valgte porten.",
+  editor_telemetry_toggle_label: "Headertelemetri",
+  editor_telemetry_toggle_text: "Vis telemetridata i kortoverskriften",
+  editor_telemetry_toggle_hint: "Aktivert som standard. Sl\xE5 av for \xE5 skjule CPU-, minne- og temperaturrader i overskriften.",
+  telemetry_unavailable_title: "Telemetri ikke tilgjengelig",
+  telemetry_unavailable_body: "Den valgte enheten leverer ikke f\xF8lgende telemetridata, derfor vises ikke disse verdiene i overskriften.",
+  editor_colors_open: "Endre farger",
+  editor_colors_back: "Tilbake til editor",
+  editor_colors_apply: "Bruk farger",
+  editor_colors_reset_all: "Tilbakestill alle farger",
+  editor_bg_opacity_label: "Kortgjennomsiktighet",
+  warning_entity_header_cpu: "CPU-sensorer i overskriften",
+  warning_entity_header_memory: "minnesensorer i overskriften",
+  warning_entity_header_cpu_temperature: "CPU-temperatursensorer i overskriften",
+  warning_entity_header_temperature: "temperatursensorer i overskriften"
+};
+TRANSLATIONS.fi = {
+  ...TRANSLATIONS.en,
+  editor_port_led_blink_label: "Porttien linkki-LEDien animaatio",
+  editor_port_led_blink_text: "Vilkuta yhdistettyjen porttien linkki-LEDej\xE4",
+  editor_port_led_blink_rj45_text: "Vilkuta RJ45-linkki-LEDej\xE4",
+  editor_port_led_blink_sfp_text: "Vilkuta SFP-linkki-LEDej\xE4",
+  editor_port_led_blink_speed_label: "Vilkkumisnopeus (1\u201310 sekunnissa)",
+  editor_port_led_blink_hint: "Vain valinnainen visuaalinen tehoste. Porttien tila, liikenteen tunnistus ja ohjaimet eiv\xE4t muutu.",
+  editor_trust_link_speed_ports_label: "Luota porttien 10 Mbit/s linkkinopeuteen",
+  editor_trust_link_speed_ports_hint: "Valitse vain portit, joissa on todellinen 10 Mbit/s yhteys. T\xE4m\xE4 poistaa virheellisesti ilmoitettujen linkkien suojauksen k\xE4yt\xF6st\xE4 valitussa portissa.",
+  editor_telemetry_toggle_label: "Otsakkeen telemetria",
+  editor_telemetry_toggle_text: "N\xE4yt\xE4 telemetriatiedot kortin otsakkeessa",
+  editor_telemetry_toggle_hint: "K\xE4yt\xF6ss\xE4 oletuksena. Poista k\xE4yt\xF6st\xE4 piilottaaksesi CPU-, muisti- ja l\xE4mp\xF6tilarivit otsakkeesta.",
+  telemetry_unavailable_title: "Telemetria ei ole saatavilla",
+  telemetry_unavailable_body: "Valittu laite ei tarjoa seuraavia telemetriatietoja, joten n\xE4it\xE4 arvoja ei n\xE4ytet\xE4 otsakkeessa.",
+  editor_colors_open: "Vaihda v\xE4rej\xE4",
+  editor_colors_back: "Takaisin editoriin",
+  editor_colors_apply: "K\xE4yt\xE4 v\xE4rit",
+  editor_colors_reset_all: "Nollaa kaikki v\xE4rit",
+  editor_bg_opacity_label: "Kortin l\xE4pin\xE4kyvyys",
+  warning_entity_header_cpu: "otsakkeen CPU-anturit",
+  warning_entity_header_memory: "otsakkeen muistianturit",
+  warning_entity_header_cpu_temperature: "otsakkeen CPU-l\xE4mp\xF6tila-anturit",
+  warning_entity_header_temperature: "otsakkeen l\xE4mp\xF6tila-anturit"
+};
+TRANSLATIONS.pl = {
+  ...TRANSLATIONS.en,
+  editor_port_led_blink_label: "Animacja diod po\u0142\u0105czenia port\xF3w",
+  editor_port_led_blink_text: "Miganie diod po\u0142\u0105czenia aktywnych port\xF3w",
+  editor_port_led_blink_rj45_text: "Miganie diod po\u0142\u0105czenia RJ45",
+  editor_port_led_blink_sfp_text: "Miganie diod po\u0142\u0105czenia SFP",
+  editor_port_led_blink_speed_label: "Szybko\u015B\u0107 migania (1\u201310 na sekund\u0119)",
+  editor_port_led_blink_hint: "Tylko opcjonalny efekt wizualny. Stan port\xF3w, wykrywanie ruchu i sterowanie pozostaj\u0105 bez zmian.",
+  editor_trust_link_speed_ports_label: "Ufaj pr\u0119dko\u015Bci \u0142\u0105cza 10 Mbit/s na portach",
+  editor_trust_link_speed_ports_hint: "Wybieraj tylko porty z rzeczywistym po\u0142\u0105czeniem 10 Mbit/s. Wy\u0142\u0105cza to ochron\u0119 przed b\u0142\u0119dnie zg\u0142aszanymi \u0142\u0105czami dla wybranego portu.",
+  editor_telemetry_toggle_label: "Telemetria nag\u0142\xF3wka",
+  editor_telemetry_toggle_text: "Poka\u017C dane telemetryczne w nag\u0142\xF3wku karty",
+  editor_telemetry_toggle_hint: "Domy\u015Blnie w\u0142\u0105czone. Wy\u0142\u0105cz, aby ukry\u0107 w nag\u0142\xF3wku wiersze CPU, pami\u0119ci i temperatury.",
+  telemetry_unavailable_title: "Telemetria niedost\u0119pna",
+  telemetry_unavailable_body: "Wybrane urz\u0105dzenie nie udost\u0119pnia nast\u0119puj\u0105cych danych telemetrycznych, dlatego te warto\u015Bci nie s\u0105 pokazywane w nag\u0142\xF3wku.",
+  editor_colors_open: "Zmie\u0144 kolory",
+  editor_colors_back: "Wr\xF3\u0107 do edytora",
+  editor_colors_apply: "Zastosuj kolory",
+  editor_colors_reset_all: "Resetuj wszystkie kolory",
+  editor_bg_opacity_label: "Przezroczysto\u015B\u0107 karty",
+  warning_entity_header_cpu: "czujniki CPU w nag\u0142\xF3wku",
+  warning_entity_header_memory: "czujniki pami\u0119ci w nag\u0142\xF3wku",
+  warning_entity_header_cpu_temperature: "czujniki temperatury CPU w nag\u0142\xF3wku",
+  warning_entity_header_temperature: "czujniki temperatury w nag\u0142\xF3wku"
+};
+TRANSLATIONS.cs = {
+  ...TRANSLATIONS.en,
+  editor_port_led_blink_label: "Animace kontrolek p\u0159ipojen\xED port\u016F",
+  editor_port_led_blink_text: "Blik\xE1n\xED kontrolek p\u0159ipojen\xFDch port\u016F",
+  editor_port_led_blink_rj45_text: "Blik\xE1n\xED kontrolek p\u0159ipojen\xED RJ45",
+  editor_port_led_blink_sfp_text: "Blik\xE1n\xED kontrolek p\u0159ipojen\xED SFP",
+  editor_port_led_blink_speed_label: "Rychlost blik\xE1n\xED (1\u201310 za sekundu)",
+  editor_port_led_blink_hint: "Pouze voliteln\xFD vizu\xE1ln\xED efekt. Stav port\u016F, detekce provozu a ovl\xE1d\xE1n\xED z\u016Fst\xE1vaj\xED beze zm\u011Bny.",
+  editor_trust_link_speed_ports_label: "D\u016Fv\u011B\u0159ovat rychlosti linky 10 Mbit/s na portech",
+  editor_trust_link_speed_ports_hint: "Vyberte pouze porty se skute\u010Dn\xFDm p\u0159ipojen\xEDm 10 Mbit/s. T\xEDm se pro vybran\xFD port vypne ochrana proti chybn\u011B hl\xE1\u0161en\xFDm link\xE1m.",
+  editor_telemetry_toggle_label: "Telemetrie z\xE1hlav\xED",
+  editor_telemetry_toggle_text: "Zobrazit telemetrii v z\xE1hlav\xED karty",
+  editor_telemetry_toggle_hint: "Ve v\xFDchoz\xEDm stavu zapnuto. Vypnut\xEDm skryjete \u0159\xE1dky CPU, pam\u011Bti a teploty v z\xE1hlav\xED.",
+  telemetry_unavailable_title: "Telemetrie nen\xED dostupn\xE1",
+  telemetry_unavailable_body: "Vybran\xE9 za\u0159\xEDzen\xED neposkytuje n\xE1sleduj\xEDc\xED telemetrick\xE1 data, proto se tyto hodnoty v z\xE1hlav\xED nezobrazuj\xED.",
+  editor_colors_open: "Zm\u011Bnit barvy",
+  editor_colors_back: "Zp\u011Bt do editoru",
+  editor_colors_apply: "Pou\u017E\xEDt barvy",
+  editor_colors_reset_all: "Resetovat v\u0161echny barvy",
+  editor_bg_opacity_label: "Pr\u016Fhlednost karty",
+  warning_entity_header_cpu: "senzory CPU v z\xE1hlav\xED",
+  warning_entity_header_memory: "senzory pam\u011Bti v z\xE1hlav\xED",
+  warning_entity_header_cpu_temperature: "senzory teploty CPU v z\xE1hlav\xED",
+  warning_entity_header_temperature: "senzory teploty v z\xE1hlav\xED"
+};
+function getTranslations(lang) {
+  if (!lang) return TRANSLATIONS.en;
+  const short = String(lang).trim().split(/[-_]/)[0].toLowerCase();
+  return TRANSLATIONS[short] || TRANSLATIONS.en;
+}
+function t(hass, key) {
+  const lang = hass?.language || hass?.locale?.language || "en";
+  const strings = getTranslations(lang);
+  return strings[key] ?? TRANSLATIONS.en[key] ?? key;
+}
+
+// src/unifi-device-card-editor.js
+function slotPortType(slot) {
+  const key = String(slot.key || "").toLowerCase();
+  if (key === "wan" || key === "wan2") return "wan";
+  if (key.includes("sfp_wan") || key.includes("wan_sfp")) return "sfp_wan";
+  if (key.includes("sfp")) return "sfp";
+  return "lan";
+}
+function slotDropdownLabel(slot, tFn) {
+  const type = slotPortType(slot);
+  const portNum = slot.port != null ? ` (${tFn("port_label")} ${slot.port})` : "";
+  switch (type) {
+    case "wan":
+      return `${slot.label}${portNum}`;
+    case "sfp_wan":
+      return `${slot.label}${portNum} \u2014 ${tFn("editor_wan_port_sfpwan")}`;
+    case "sfp":
+      return `${slot.label}${portNum} \u2014 ${tFn("editor_wan_port_sfp")}`;
+    default:
+      return `${slot.label}${portNum} \u2014 ${tFn("editor_wan_port_lan")}`;
+  }
+}
+function buildGatewayRoleOptions(layout, tFn, { includeNone = false } = {}) {
+  const options = [{ value: "auto", label: tFn("editor_wan_port_auto") }];
+  if (includeNone) {
+    options.push({ value: "none", label: tFn("editor_wan2_port_none") });
+  }
+  if (!layout) return options;
+  for (const slot of layout.specialSlots || []) {
+    options.push({
+      value: slot.key,
+      label: slotDropdownLabel(slot, tFn),
+      type: slotPortType(slot),
+      port: slot.port ?? null
+    });
+  }
+  const allPortNums = (layout.rows || []).flat();
+  for (const portNum of allPortNums) {
+    options.push({
+      value: `port_${portNum}`,
+      label: `${tFn("port_label")} ${portNum} \u2014 ${tFn("editor_wan_port_lan")}`,
+      type: "lan",
+      port: portNum
+    });
+  }
+  const seen = /* @__PURE__ */ new Set();
+  return options.filter((option) => {
+    const key = `${option.value}|${option.label}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function resolveSelectionForConflict(value, roleKey, layout) {
+  const normalized = String(value || "auto");
+  if (normalized === "none") return "none";
+  if (normalized !== "auto") return normalized;
+  const defaultSlot = (layout?.specialSlots || []).find((slot) => slot.key === roleKey);
+  if (!defaultSlot) return roleKey === "wan2" ? "none" : "auto";
+  return defaultSlot.port != null ? `port_${defaultSlot.port}` : defaultSlot.key;
+}
+function roleSelectionsConflict(a, aRole, b, bRole, layout) {
+  const resolvedA = resolveSelectionForConflict(a, aRole, layout);
+  const resolvedB = resolveSelectionForConflict(b, bRole, layout);
+  if (resolvedA === "none" || resolvedB === "none") return false;
+  return resolvedA === resolvedB;
+}
+function clampOpacity(value) {
+  const num = Number.parseInt(value, 10);
+  if (!Number.isFinite(num)) return 100;
+  return Math.min(100, Math.max(0, num));
+}
+function normalizePortsPerRow(value) {
+  const num = Number.parseInt(value, 10);
+  if (!Number.isFinite(num) || num < 1) return void 0;
+  return Math.min(24, num);
+}
+function clampPortSize(value) {
+  const num = Number.parseInt(value, 10);
+  if (!Number.isFinite(num)) return 36;
+  return Math.min(52, Math.max(24, num));
+}
+function clampApScale(value) {
+  const num = Number.parseInt(value, 10);
+  if (!Number.isFinite(num)) return 100;
+  return Math.min(140, Math.max(25, num));
+}
+function normalizePortLedBlinkSpeed(value) {
+  const speed = Number(value);
+  if (!Number.isFinite(speed)) return 1;
+  return Math.min(1, Math.max(0.1, speed));
+}
+function portLedBlinkRate(value) {
+  return Math.min(10, Math.max(1, Math.round(1 / normalizePortLedBlinkSpeed(value))));
+}
+function portLedBlinkSpeedFromRate(value) {
+  const rate = Math.min(10, Math.max(1, Number.parseInt(value, 10) || 1));
+  return Number((1 / rate).toFixed(3));
+}
+function escapeHtml(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+var COLOR_SLOTS = [
+  { key: "background_color", token: "background", cssVar: "--udc-card-bg", fallback: "var(--card-background-color)" },
+  { key: "title_color", token: "title", cssVar: "--udc-title-color", fallback: "var(--primary-text-color, #e2e8f0)" },
+  { key: "telemetry_color", token: "telemetry", cssVar: "--udc-telemetry-color", fallback: "var(--primary-text-color, #e2e8f0)" },
+  { key: "label_color", token: "label", cssVar: "--udc-label-color", fallback: "var(--secondary-text-color, #6f7d90)" },
+  { key: "value_color", token: "value", cssVar: "--udc-value-color", fallback: "var(--primary-text-color, #e2e8f0)" },
+  { key: "meta_color", token: "meta", cssVar: "--udc-meta-color", fallback: "var(--udc-muted, #6f7d90)" },
+  { key: "port_label_color", token: "port_label", cssVar: "--udc-port-label-color", fallback: "#646a76" },
+  { key: "special_port_label_color", token: "special_port_label", cssVar: "--udc-special-port-label-color", fallback: "#646a76" },
+  { key: "ap_led_color", token: "ap_led", cssVar: "--udc-ap-led-color", fallback: "#0000ff" },
+  { key: "button_color", token: "button", cssVar: "--udc-button-bg", fallback: "#0090d9" },
+  { key: "button_text_color", token: "button_text", cssVar: "--udc-button-text-color", fallback: "#ffffff" },
+  { key: "button_secondary_color", token: "button_secondary", cssVar: "--udc-button-secondary-bg", fallback: "#262b34" },
+  { key: "button_secondary_text_color", token: "button_secondary_text", cssVar: "--udc-button-secondary-text-color", fallback: "#e2e8f0" },
+  { key: "button_border_color", token: "button_border", cssVar: "--udc-button-border-color", fallback: "#3b4350" }
+];
+var COLOR_SLOT_BY_KEY = Object.fromEntries(COLOR_SLOTS.map((slot) => [slot.key, slot]));
+function colorSlotLabel(tFn, key) {
+  const slot = COLOR_SLOT_BY_KEY[key];
+  if (!slot) return key;
+  return tFn(`editor_color_slot_${slot.token}`);
+}
+function parseColorWithAlpha(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const hex8 = value.match(/^#([\da-f]{8})$/i);
+  if (hex8) {
+    const part = hex8[1];
+    return {
+      hex: `#${part.slice(0, 6).toLowerCase()}`,
+      alpha: Math.round(Number.parseInt(part.slice(6, 8), 16) / 255 * 100)
+    };
+  }
+  const hex6 = value.match(/^#([\da-f]{6})$/i);
+  if (hex6) return { hex: `#${hex6[1].toLowerCase()}`, alpha: 100 };
+  const rgba = value.match(/^rgba?\((.+)\)$/i);
+  if (rgba) {
+    const parts = rgba[1].split(",").map((part) => part.trim());
+    if (parts.length >= 3) {
+      const r = Math.min(255, Math.max(0, Number.parseFloat(parts[0]) || 0));
+      const g = Math.min(255, Math.max(0, Number.parseFloat(parts[1]) || 0));
+      const b = Math.min(255, Math.max(0, Number.parseFloat(parts[2]) || 0));
+      const aRaw = parts[3] != null ? Number.parseFloat(parts[3]) : 1;
+      const a = Number.isFinite(aRaw) ? Math.min(1, Math.max(0, aRaw)) : 1;
+      const toHex = (num) => num.toString(16).padStart(2, "0");
+      return {
+        hex: `#${toHex(Math.round(r))}${toHex(Math.round(g))}${toHex(Math.round(b))}`,
+        alpha: Math.round(a * 100)
+      };
+    }
+  }
+  return null;
+}
+function normalizeHexColor(value) {
+  const hex = String(value || "").trim().toLowerCase();
+  if (!/^#([\da-f]{3}|[\da-f]{6})$/i.test(hex)) return null;
+  if (hex.length === 7) return hex;
+  const [r, g, b] = hex.slice(1).split("");
+  return `#${r}${r}${g}${g}${b}${b}`;
+}
+function normalizeSpecialPortNumbers(value) {
+  if (!Array.isArray(value)) return [];
+  const normalized = value.map((entry) => Number(entry)).filter((num) => Number.isInteger(num) && num > 0);
+  return Array.from(new Set(normalized)).sort((a, b) => a - b);
+}
+function collectLayoutPorts(layout) {
+  if (!layout) return [];
+  const numbered = (layout.rows || []).flat().filter((port) => Number.isInteger(port) && port > 0);
+  const specials = (layout.specialSlots || []).map((slot) => slot?.port).filter((port) => Number.isInteger(port) && port > 0);
+  const declared = Array.from(/* @__PURE__ */ new Set([...numbered, ...specials])).sort((a, b) => a - b);
+  if (declared.length) return declared;
+  const portCount = Number(layout.portCount);
+  if (!Number.isInteger(portCount) || portCount < 1) return [];
+  return Array.from({ length: portCount }, (_, index) => index + 1);
+}
+function collectDefaultSpecialPorts(layout) {
+  if (!layout) return [];
+  return Array.from(
+    new Set(
+      (layout.specialSlots || []).map((slot) => slot?.port).filter((port) => Number.isInteger(port) && port > 0)
+    )
+  ).sort((a, b) => a - b);
+}
+function hasExplicitSpecialPorts(config) {
+  return Object.prototype.hasOwnProperty.call(config || {}, "special_ports");
+}
+function resolveSelectedSpecialPorts(config, layout) {
+  const configured = normalizeSpecialPortNumbers(config?.special_ports);
+  if (hasExplicitSpecialPorts(config)) return configured;
+  return collectDefaultSpecialPorts(layout);
+}
+var UnifiDeviceCardEditor = class extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._devices = [];
+    this._loading = false;
+    this._loaded = false;
+    this._error = "";
+    this._hass = null;
+    this._loadToken = 0;
+    this._entityHint = null;
+    this._entityHintLoading = false;
+    this._entityHintToken = 0;
+    this._rendered = false;
+    this._deviceCtx = null;
+    this._deviceCtxLoading = false;
+    this._deviceCtxToken = 0;
+    this._lastHintDeviceId = null;
+    this._lastCtxDeviceId = null;
+    this._editorStep = "main";
+    this._draftColors = {};
+    this._draftButtonThemeStyle = true;
+    this._draftButtonDefaultColor = true;
+    this._activeColorSlot = "";
+    this._colorStepBaseConfig = null;
+    this._trustLinkSpeedPortsExpanded = false;
+    this._portLedBlinkExpanded = false;
+  }
+  setConfig(config) {
+    const prevDeviceId = this._config?.device_id || "";
+    const prevFakeMode = this._config?.fake_device === true;
+    this._config = config || {};
+    const nextFakeMode = this._config?.fake_device === true;
+    this._syncDraftColors();
+    const nextDeviceId = this._config?.device_id || "";
+    if (prevFakeMode !== nextFakeMode) {
+      ++this._loadToken;
+      ++this._entityHintToken;
+      ++this._deviceCtxToken;
+      this._devices = [];
+      this._loaded = false;
+      this._loading = false;
+      this._entityHint = null;
+      this._entityHintLoading = false;
+      this._deviceCtx = null;
+      this._deviceCtxLoading = false;
+      this._lastHintDeviceId = null;
+      this._lastCtxDeviceId = null;
+      if (this._hass) this._loadDevices();
+    }
+    const selectionMatchesMode = nextFakeMode ? nextDeviceId.startsWith("fake:") : !nextDeviceId.startsWith("fake:");
+    if (this._hass && nextDeviceId && selectionMatchesMode) {
+      if (nextDeviceId !== prevDeviceId) {
+        ++this._entityHintToken;
+        ++this._deviceCtxToken;
+        this._entityHint = null;
+        this._deviceCtx = null;
+        this._lastHintDeviceId = null;
+        this._lastCtxDeviceId = null;
+        if (!nextFakeMode) this._loadEntityHint(nextDeviceId);
+      }
+      if (nextDeviceId !== prevDeviceId || !this._deviceCtx) {
+        this._loadDeviceCtx(nextDeviceId);
+      }
+    } else {
+      this._entityHint = null;
+      this._deviceCtx = null;
+      this._lastHintDeviceId = null;
+      this._lastCtxDeviceId = null;
+    }
+    if (this._rendered) {
+      this._patchFields();
+      this._patchWarning();
+    } else {
+      this._render();
+    }
+  }
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._loaded && !this._loading) {
+      this._loadDevices();
+    }
+    const deviceId = this._config?.device_id || "";
+    if (deviceId) {
+      if (this._config?.fake_device !== true && deviceId !== this._lastHintDeviceId) {
+        this._loadEntityHint(deviceId);
+      }
+      if (deviceId !== this._lastCtxDeviceId || !this._deviceCtx) {
+        this._loadDeviceCtx(deviceId);
+      }
+    }
+  }
+  _t(key) {
+    return t(this._hass, key);
+  }
+  _syncDraftColors() {
+    const nextDraft = {};
+    for (const slot of COLOR_SLOTS) {
+      if (this._config?.[slot.key]) nextDraft[slot.key] = this._config[slot.key];
+    }
+    this._draftColors = nextDraft;
+    this._draftButtonThemeStyle = this._config?.button_theme_style !== false;
+    this._draftButtonDefaultColor = this._config?.button_default_color !== false;
+  }
+  _apHasRgbLedControl() {
+    if (!this._hass?.states) return false;
+    const ledSwitchEntity = this._deviceCtx?.led_switch_entity;
+    const ledColorEntity = this._deviceCtx?.led_color_entity;
+    if (!ledSwitchEntity && !ledColorEntity) return false;
+    const candidates = [ledSwitchEntity, ledColorEntity].filter(Boolean);
+    const hasRgbAttr = candidates.some(
+      (entityId) => Array.isArray(this._hass?.states?.[entityId]?.attributes?.rgb_color)
+    );
+    if (hasRgbAttr) return true;
+    if (!ledColorEntity) return false;
+    const raw = String(this._hass.states?.[ledColorEntity]?.state || "").trim().toLowerCase();
+    return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(raw) || /^rgb\(/i.test(raw);
+  }
+  _resolveSlotPickerHex(slot) {
+    if (!slot) return "#1f2937";
+    const draft = parseColorWithAlpha(this._draftColors[slot.key] || "")?.hex;
+    if (draft) return draft;
+    const fallback = parseColorWithAlpha(slot.fallback || "")?.hex;
+    if (fallback) return fallback;
+    const fallbackHexMatch = String(slot.fallback || "").match(/#([\da-f]{6}|[\da-f]{3})/i);
+    const fallbackHex = normalizeHexColor(fallbackHexMatch ? `#${fallbackHexMatch[1]}` : "");
+    if (fallbackHex) return fallbackHex;
+    if (slot.key === "background_color" && typeof getComputedStyle === "function") {
+      const fromHost = getComputedStyle(this).getPropertyValue("--card-background-color");
+      const fromRoot = getComputedStyle(document.documentElement).getPropertyValue("--card-background-color");
+      const resolved = parseColorWithAlpha(String(fromHost || fromRoot || "").trim())?.hex;
+      if (resolved) return resolved;
+    }
+    return "#1f2937";
+  }
+  async _loadDevices() {
+    if (!this._hass) return;
+    this._loading = true;
+    this._error = "";
+    this._render();
+    const token = ++this._loadToken;
+    try {
+      const devices = await getUnifiDevices(this._hass, this._config);
+      if (token !== this._loadToken) return;
+      this._devices = devices;
+      this._loaded = true;
+    } catch (err) {
+      console.error("[unifi-device-card] failed to load devices", err);
+      if (token !== this._loadToken) return;
+      this._devices = this._devices || [];
+      this._error = this._t("editor_error");
+    }
+    this._loading = false;
+    this._render();
+  }
+  async _loadEntityHint(deviceId) {
+    if (!this._hass || !deviceId) return;
+    this._entityHintLoading = true;
+    this._lastHintDeviceId = deviceId;
+    this._patchWarning();
+    const token = ++this._entityHintToken;
+    try {
+      const result = await getRelevantEntityWarningsForDevice(this._hass, deviceId);
+      if (token !== this._entityHintToken) return;
+      this._entityHint = result;
+    } catch (err) {
+      console.error("[unifi-device-card] failed to load entity warning", err);
+      if (token !== this._entityHintToken) return;
+    }
+    this._entityHintLoading = false;
+    this._patchWarning();
+  }
+  async _loadDeviceCtx(deviceId) {
+    if (!this._hass || !deviceId) return;
+    this._deviceCtxLoading = true;
+    this._lastCtxDeviceId = deviceId;
+    this._patchFields();
+    const token = ++this._deviceCtxToken;
+    try {
+      const result = await getDeviceContext(this._hass, deviceId, this._config);
+      if (token !== this._deviceCtxToken) return;
+      this._deviceCtx = result;
+    } catch (err) {
+      console.error("[unifi-device-card] failed to load device context for editor", err);
+      if (token !== this._deviceCtxToken) return;
+    }
+    this._deviceCtxLoading = false;
+    this._patchFields();
+  }
+  _dispatchConfig(config) {
+    this.dispatchEvent(new CustomEvent("config-changed", {
+      detail: { config },
+      bubbles: true,
+      composed: true
+    }));
+  }
+  _emitConfig(partial) {
+    const next = { ...this._config, ...partial };
+    const hadExplicitSpecialPorts = hasExplicitSpecialPorts(this._config);
+    const hasIncomingSpecialPorts = hasExplicitSpecialPorts(partial);
+    const keepExplicitSpecialPorts = hasIncomingSpecialPorts || hadExplicitSpecialPorts;
+    if (!next.name) delete next.name;
+    next.mesh_signal_entity = String(next.mesh_signal_entity || "").trim();
+    if (!next.mesh_signal_entity) delete next.mesh_signal_entity;
+    next.product_image_url = normalizeProductImageUrl(next.product_image_url);
+    if (!next.product_image_url) delete next.product_image_url;
+    if (!next.background_color) delete next.background_color;
+    const buttonThemeStyle = next.button_theme_style !== false;
+    if (buttonThemeStyle) {
+      delete next.button_theme_style;
+      delete next.button_default_color;
+      for (const key of ["button_color", "button_text_color", "button_secondary_color", "button_secondary_text_color", "button_border_color"]) {
+        delete next[key];
+      }
+    } else if (next.button_default_color !== false) {
+      next.button_theme_style = false;
+      delete next.button_default_color;
+      for (const key of ["button_color", "button_text_color", "button_secondary_color", "button_secondary_text_color", "button_border_color"]) {
+        delete next[key];
+      }
+    } else {
+      next.button_theme_style = false;
+      next.button_default_color = false;
+    }
+    for (const slot of COLOR_SLOTS) {
+      if (!next[slot.key]) delete next[slot.key];
+    }
+    next.background_opacity = clampOpacity(next.background_opacity);
+    if (next.background_opacity === 100) delete next.background_opacity;
+    if (!next.wan_port || next.wan_port === "auto") delete next.wan_port;
+    if (!next.wan2_port || next.wan2_port === "auto") delete next.wan2_port;
+    if (next.wan2_port === "none") next.wan2_port = "none";
+    const hasManualWanSelection = !!next.wan_port || !!next.wan2_port;
+    if (hasManualWanSelection) next.edit_special_ports = true;
+    next.custom_special_ports = normalizeSpecialPortNumbers(next.custom_special_ports);
+    if (!next.custom_special_ports.length) delete next.custom_special_ports;
+    next.trust_link_speed_ports = normalizeSpecialPortNumbers(next.trust_link_speed_ports);
+    if (!next.trust_link_speed_ports.length) delete next.trust_link_speed_ports;
+    next.special_ports = normalizeSpecialPortNumbers(next.special_ports);
+    if (!next.special_ports.length && next.edit_special_ports === true && !keepExplicitSpecialPorts) {
+      next.special_ports = collectDefaultSpecialPorts(this._deviceCtx?.layout);
+    }
+    if (!next.special_ports.length) {
+      if (next.edit_special_ports === true && keepExplicitSpecialPorts) {
+        next.special_ports = [];
+      } else {
+        delete next.special_ports;
+      }
+    }
+    if (next.edit_special_ports !== true) delete next.edit_special_ports;
+    if (next.show_name !== false) delete next.show_name;
+    if (next.show_telemetry !== false) delete next.show_telemetry;
+    if (next.show_product_image !== true) delete next.show_product_image;
+    if (next.show_panel !== false) delete next.show_panel;
+    if (next.dynamic_port_details !== true) delete next.dynamic_port_details;
+    if (next.port_led_blink !== true) {
+      delete next.port_led_blink;
+      delete next.port_led_blink_speed;
+      delete next.port_led_blink_rj45;
+      delete next.port_led_blink_sfp;
+      delete next.port_led_blink_speed_rj45;
+      delete next.port_led_blink_speed_sfp;
+    } else {
+      if (next.port_led_blink_speed != null) {
+        next.port_led_blink_speed = normalizePortLedBlinkSpeed(next.port_led_blink_speed);
+        if (next.port_led_blink_speed === 1) delete next.port_led_blink_speed;
+      }
+      for (const media of ["rj45", "sfp"]) {
+        const enabledKey = `port_led_blink_${media}`;
+        const speedKey = `port_led_blink_speed_${media}`;
+        if (next[enabledKey] !== false) delete next[enabledKey];
+        if (next[speedKey] != null) {
+          next[speedKey] = normalizePortLedBlinkSpeed(next[speedKey]);
+          if (next[speedKey] === 1 && next.port_led_blink_speed == null) delete next[speedKey];
+        }
+      }
+    }
+    if (next.force_sequential_ports !== true) delete next.force_sequential_ports;
+    next.ports_per_row = normalizePortsPerRow(next.ports_per_row);
+    if (!next.ports_per_row) delete next.ports_per_row;
+    next.port_size = clampPortSize(next.port_size);
+    if (next.port_size === 36) delete next.port_size;
+    next.ap_scale = clampApScale(next.ap_scale);
+    if (next.ap_scale === 100) delete next.ap_scale;
+    if (next.ap_compact_view !== true) delete next.ap_compact_view;
+    if (next.integrated_ports !== false) delete next.integrated_ports;
+    if (!["combined", "network", "ap"].includes(next.device_layout)) delete next.device_layout;
+    if (next.ap_compact_show_header_telemetry !== true) delete next.ap_compact_show_header_telemetry;
+    this._dispatchConfig(next);
+  }
+  _emitDraftPreviewConfig() {
+    const base = { ...this._colorStepBaseConfig || this._config || {} };
+    base.button_theme_style = this._draftButtonThemeStyle ? void 0 : false;
+    base.button_default_color = this._draftButtonThemeStyle || this._draftButtonDefaultColor ? void 0 : false;
+    for (const slot of COLOR_SLOTS) {
+      const isButtonSlot = slot.key.startsWith("button_") && !["button_theme_style", "button_default_color"].includes(slot.key);
+      base[slot.key] = !isButtonSlot || !this._draftButtonThemeStyle && !this._draftButtonDefaultColor ? this._draftColors[slot.key] || void 0 : void 0;
+    }
+    this._dispatchConfig(base);
+  }
+  _onDeviceChange(ev) {
+    const deviceId = ev.target.value || "";
+    const nextDevice = this._devices.find((d) => d.id === deviceId) || null;
+    const prevDevice = this._devices.find((d) => d.id === this._config?.device_id) || null;
+    const currentName = this._config?.name || "";
+    const currentMatchesPrevious = !currentName || currentName === (prevDevice?.name || "");
+    const nextConfig = {
+      device_id: deviceId || void 0,
+      wan_port: void 0,
+      wan2_port: void 0,
+      custom_special_ports: void 0,
+      special_ports: void 0,
+      edit_special_ports: void 0,
+      trust_link_speed_ports: void 0,
+      ports_per_row: nextDevice?.type === "gateway" ? void 0 : this._config?.ports_per_row,
+      device_layout: void 0,
+      integrated_ports: void 0,
+      mesh_signal_entity: void 0,
+      product_image_url: void 0
+    };
+    if (!deviceId) {
+      nextConfig.name = void 0;
+    } else if (currentMatchesPrevious) {
+      nextConfig.name = nextDevice?.name || void 0;
+    }
+    this._emitConfig(nextConfig);
+  }
+  _onNameInput(ev) {
+    this._emitConfig({ name: ev.target.value || void 0 });
+  }
+  _onShowNameChange(ev) {
+    const checked = !!ev.target.checked;
+    this._emitConfig({ show_name: checked ? void 0 : false });
+  }
+  _onShowTelemetryChange(ev) {
+    const checked = !!ev.target.checked;
+    this._emitConfig({ show_telemetry: checked ? void 0 : false });
+  }
+  _onShowProductImageChange(ev) {
+    this._emitConfig({ show_product_image: ev.target.checked ? true : void 0 });
+  }
+  _onProductImageUrlChange(ev) {
+    this._emitConfig({ product_image_url: normalizeProductImageUrl(ev.target.value) || void 0 });
+  }
+  _onMeshSignalEntityChange(ev) {
+    this._emitConfig({ mesh_signal_entity: String(ev.target.value || "").trim() || void 0 });
+  }
+  _onBackgroundInput(ev) {
+    this._emitConfig({ background_color: ev.target.value || void 0 });
+  }
+  _onBackgroundOpacityInput(ev) {
+    this._emitConfig({ background_opacity: clampOpacity(ev.target.value) });
+  }
+  _onOpenColorStep() {
+    this._colorStepBaseConfig = { ...this._config || {} };
+    this._syncDraftColors();
+    this._activeColorSlot = "";
+    this._editorStep = "colors";
+    this._render();
+  }
+  _onBackFromColorStep() {
+    this._activeColorSlot = "";
+    this._editorStep = "main";
+    if (this._colorStepBaseConfig) {
+      this._dispatchConfig({ ...this._colorStepBaseConfig });
+    }
+    this._colorStepBaseConfig = null;
+    this._syncDraftColors();
+    this._render();
+  }
+  _onOpenColorDialog(ev) {
+    const slotKey = ev.currentTarget?.dataset?.slot || "";
+    if (!COLOR_SLOT_BY_KEY[slotKey]) return;
+    if (slotKey.startsWith("button_") && (this._draftButtonThemeStyle || this._draftButtonDefaultColor)) return;
+    this._activeColorSlot = slotKey;
+    this._render();
+  }
+  _onCloseColorDialog() {
+    this._activeColorSlot = "";
+    this._render();
+  }
+  _setDraftColor(slotKey, value) {
+    if (!COLOR_SLOT_BY_KEY[slotKey]) return;
+    const normalizedHex = normalizeHexColor(value);
+    const nextValue = normalizedHex || String(value || "").trim();
+    if (!nextValue) {
+      delete this._draftColors[slotKey];
+    } else {
+      this._draftColors[slotKey] = nextValue;
+    }
+    this._emitDraftPreviewConfig();
+  }
+  _onDraftColorHexInput(ev) {
+    const slotKey = this._activeColorSlot;
+    if (!COLOR_SLOT_BY_KEY[slotKey]) return;
+    const hex = String(ev.target.value || "").trim().toLowerCase();
+    this._setDraftColor(slotKey, hex);
+  }
+  _onDraftColorRawInput(ev) {
+    const slotKey = this._activeColorSlot;
+    if (!COLOR_SLOT_BY_KEY[slotKey]) return;
+    this._setDraftColor(slotKey, String(ev.target.value || "").trim());
+  }
+  _onResetSlotColor() {
+    const slotKey = this._activeColorSlot;
+    if (!COLOR_SLOT_BY_KEY[slotKey]) return;
+    this._setDraftColor(slotKey, "");
+    this._render();
+  }
+  _onResetAllColors() {
+    for (const slot of COLOR_SLOTS) delete this._draftColors[slot.key];
+    this._draftButtonThemeStyle = true;
+    this._draftButtonDefaultColor = true;
+    this._emitDraftPreviewConfig();
+    this._render();
+  }
+  _onButtonThemeStyleChange(ev) {
+    this._draftButtonThemeStyle = !!ev.target.checked;
+    if (!this._draftButtonThemeStyle) this._draftButtonDefaultColor = true;
+    this._activeColorSlot = "";
+    this._emitDraftPreviewConfig();
+    this._render();
+  }
+  _onButtonDefaultColorChange(ev) {
+    this._draftButtonDefaultColor = !!ev.target.checked;
+    this._activeColorSlot = "";
+    this._emitDraftPreviewConfig();
+    this._render();
+  }
+  _onApplyDraftColors() {
+    const payload = {
+      button_theme_style: this._draftButtonThemeStyle ? void 0 : false,
+      button_default_color: this._draftButtonThemeStyle || this._draftButtonDefaultColor ? void 0 : false
+    };
+    for (const slot of COLOR_SLOTS) {
+      const isButtonSlot = slot.key.startsWith("button_");
+      payload[slot.key] = !isButtonSlot || !this._draftButtonThemeStyle && !this._draftButtonDefaultColor ? this._draftColors[slot.key] || void 0 : void 0;
+    }
+    this._emitConfig(payload);
+    this._activeColorSlot = "";
+    this._editorStep = "main";
+    this._colorStepBaseConfig = null;
+    this._render();
+  }
+  _onShowPanelChange(ev) {
+    const checked = !!ev.target.checked;
+    this._emitConfig({ show_panel: checked ? void 0 : false });
+  }
+  _onDynamicPortDetailsChange(ev) {
+    this._emitConfig({ dynamic_port_details: ev.target.checked ? true : void 0 });
+  }
+  _onPortLedBlinkChange(ev) {
+    const enabled = ev.target.checked;
+    const hasSharedSpeed = this._config?.port_led_blink_speed != null;
+    this._emitConfig({
+      port_led_blink: enabled ? true : void 0,
+      port_led_blink_speed: enabled ? this._config?.port_led_blink_speed : void 0,
+      port_led_blink_speed_rj45: enabled ? this._config?.port_led_blink_speed_rj45 ?? (hasSharedSpeed ? void 0 : 0.2) : void 0,
+      port_led_blink_speed_sfp: enabled ? this._config?.port_led_blink_speed_sfp ?? (hasSharedSpeed ? void 0 : 0.2) : void 0
+    });
+  }
+  _onPortLedBlinkMediaChange(media, checked) {
+    const otherMedia = media === "rj45" ? "sfp" : "rj45";
+    const otherEnabled = this._config?.[`port_led_blink_${otherMedia}`] !== false;
+    this._emitConfig({
+      port_led_blink: checked || otherEnabled ? true : void 0,
+      [`port_led_blink_${media}`]: checked ? void 0 : false
+    });
+  }
+  _onPortsPerRowChange(ev) {
+    this._emitConfig({ ports_per_row: normalizePortsPerRow(ev.target.value) });
+  }
+  _onForceSequentialPortsChange(ev) {
+    const checked = !!ev.target.checked;
+    this._emitConfig({ force_sequential_ports: checked ? true : void 0 });
+  }
+  _onPortSizeInput(ev) {
+    this._emitConfig({ port_size: clampPortSize(ev.target.value) });
+  }
+  _onApScaleInput(ev) {
+    this._emitConfig({ ap_scale: clampApScale(ev.target.value) });
+  }
+  _onApCompactViewChange(ev) {
+    const checked = !!ev.target.checked;
+    this._emitConfig({
+      ap_compact_view: checked ? true : void 0,
+      ap_compact_show_header_telemetry: checked ? this._config?.ap_compact_show_header_telemetry : void 0
+    });
+  }
+  _onApCompactHeaderTelemetryChange(ev) {
+    const checked = !!ev.target.checked;
+    this._emitConfig({ ap_compact_show_header_telemetry: checked ? true : void 0 });
+  }
+  _onWanPortChange(ev) {
+    const nextValue = ev.target.value || "auto";
+    const currentWan2 = this._config?.wan2_port || "auto";
+    const layout = this._deviceCtx?.layout;
+    let nextWan2 = currentWan2;
+    if (roleSelectionsConflict(nextValue, "wan", currentWan2, "wan2", layout)) {
+      nextWan2 = "none";
+    }
+    this._emitConfig({
+      wan_port: nextValue === "auto" ? void 0 : nextValue,
+      wan2_port: nextWan2 === "auto" ? void 0 : nextWan2,
+      edit_special_ports: true
+    });
+  }
+  _onWan2PortChange(ev) {
+    const nextValue = ev.target.value || "auto";
+    const currentWan = this._config?.wan_port || "auto";
+    const layout = this._deviceCtx?.layout;
+    let safeValue = nextValue;
+    if (roleSelectionsConflict(currentWan, "wan", nextValue, "wan2", layout)) {
+      safeValue = "none";
+    }
+    this._emitConfig({
+      wan2_port: safeValue === "auto" ? void 0 : safeValue,
+      edit_special_ports: true
+    });
+  }
+  _onEditSpecialPortsChange(ev) {
+    const enabled = !!ev.target.checked;
+    const defaults = collectDefaultSpecialPorts(this._deviceCtx?.layout);
+    const hasConfiguredSpecialPorts = hasExplicitSpecialPorts(this._config);
+    const current = normalizeSpecialPortNumbers(this._config?.special_ports);
+    this._emitConfig({
+      edit_special_ports: enabled ? true : void 0,
+      special_ports: enabled ? hasConfiguredSpecialPorts ? current : defaults : void 0,
+      custom_special_ports: void 0
+    });
+  }
+  _onSpecialPortToggle(ev) {
+    const button = ev.target?.closest?.("[data-port]");
+    if (!button) return;
+    const port = Number.parseInt(button.dataset.port, 10);
+    if (!Number.isInteger(port) || port < 1) return;
+    const current = resolveSelectedSpecialPorts(this._config, this._deviceCtx?.layout);
+    const next = current.includes(port) ? current.filter((p) => p !== port) : [...current, port];
+    this._emitConfig({
+      special_ports: normalizeSpecialPortNumbers(next)
+    });
+  }
+  _onTrustLinkSpeedPortToggle(ev) {
+    const button = ev.target?.closest?.("[data-port]");
+    if (!button) return;
+    const port = Number(button.dataset.port);
+    if (!Number.isInteger(port) || port < 1) return;
+    const current = normalizeSpecialPortNumbers(this._config?.trust_link_speed_ports);
+    const next = current.includes(port) ? current.filter((entry) => entry !== port) : [...current, port];
+    this._emitConfig({ trust_link_speed_ports: next });
+  }
+  _warningItems() {
+    const hint = this._entityHint;
+    if (!hint) return [];
+    const order = [
+      "port_switch",
+      "poe_switch",
+      "poe_power",
+      "link_speed",
+      "rx_tx",
+      "power_cycle",
+      "link",
+      "header_cpu",
+      "header_memory",
+      "header_cpu_temperature",
+      "header_temperature"
+    ];
+    return order.map((key) => ({
+      key,
+      count: (hint.disabled?.[key]?.length || 0) + (hint.hidden?.[key]?.length || 0)
+    })).filter((item) => item.count > 0);
+  }
+  _unavailableTelemetryItems() {
+    if (this._config?.show_telemetry === false || !this._deviceCtx || this._deviceCtxLoading) return [];
+    return getUnavailableHeaderTelemetryKeys(this._deviceCtx).map((labelKey) => this._t(labelKey));
+  }
+  _unavailableTelemetryHTML() {
+    const items = this._unavailableTelemetryItems();
+    if (!items.length) return "";
+    const list = `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+    return `
+      <div class="warn telemetry-missing">
+        <div class="warn-title">${escapeHtml(this._t("telemetry_unavailable_title"))}</div>
+        <div class="warn-body">${escapeHtml(this._t("telemetry_unavailable_body"))}</div>
+        ${list}
+      </div>
+    `;
+  }
+  _warningHTML() {
+    if (this._entityHintLoading && !this._entityHint) {
+      return `<div class="warn loading">${escapeHtml(this._t("warning_checking"))}</div>`;
+    }
+    if (!this._entityHint) return "";
+    const disabled = this._entityHint?.disabledCount || 0;
+    const hidden = this._entityHint?.hiddenCount || 0;
+    const items = this._warningItems();
+    const summary = this._t("warning_status").replace("{disabled}", String(disabled)).replace("{hidden}", String(hidden));
+    const list = items.length ? `<ul>${items.map(
+      (item) => `<li><strong>${escapeHtml(item.count)}</strong> ${escapeHtml(this._t(`warning_entity_${item.key}`))}</li>`
+    ).join("")}</ul>` : "";
+    return `
+      <div class="warn">
+        <div class="warn-title">${escapeHtml(this._t("warning_title"))}</div>
+        <div class="warn-body">${escapeHtml(this._t("warning_body"))}</div>
+        <div class="warn-status">${escapeHtml(summary)}</div>
+        ${list}
+        <div class="warn-path">
+          <strong>${escapeHtml(this._t("warning_check_in"))}</strong><br>
+          ${escapeHtml(this._t("warning_ha_path"))}
+        </div>
+      </div>
+    `;
+  }
+  _gatewayControlsHTML(showControls = true) {
+    const deviceId = this._config?.device_id || "";
+    const selectedDevice = this._devices.find((d) => d.id === deviceId) || null;
+    const isGateway = this._deviceCtx?.type === "gateway" || selectedDevice?.type === "gateway";
+    if (!isGateway) return "";
+    if (!showControls) return "";
+    const layout = this._deviceCtx?.layout;
+    if (!layout) {
+      return `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_wan_port_label"))}</label>
+          <select id="wan_port" disabled>
+            <option value="auto">${escapeHtml(this._t("editor_device_loading"))}</option>
+          </select>
+          <div class="hint">${escapeHtml(this._t("editor_wan_port_hint"))}</div>
+        </div>
+
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_wan2_port_label"))}</label>
+          <select id="wan2_port" disabled>
+            <option value="auto">${escapeHtml(this._t("editor_device_loading"))}</option>
+          </select>
+          <div class="hint">${escapeHtml(this._t("editor_wan2_port_hint"))}</div>
+        </div>
+      `;
+    }
+    const wanOptions = buildGatewayRoleOptions(layout, (k) => this._t(k));
+    const wan2Options = buildGatewayRoleOptions(layout, (k) => this._t(k), { includeNone: true });
+    const selectedWan = this._config?.wan_port || "auto";
+    let selectedWan2 = this._config?.wan2_port || "auto";
+    if (roleSelectionsConflict(selectedWan, "wan", selectedWan2, "wan2", layout)) {
+      selectedWan2 = "none";
+    }
+    return `
+      <div class="field">
+        <label>${escapeHtml(this._t("editor_wan_port_label"))}</label>
+        <select id="wan_port">
+          ${wanOptions.map(
+      (opt) => `<option value="${escapeAttr(opt.value)}" ${opt.value === selectedWan ? "selected" : ""}>${escapeHtml(opt.label)}</option>`
+    ).join("")}
+        </select>
+        <div class="hint">${escapeHtml(this._t("editor_wan_port_hint"))}</div>
+      </div>
+
+      <div class="field">
+        <label>${escapeHtml(this._t("editor_wan2_port_label"))}</label>
+        <select id="wan2_port">
+          ${wan2Options.map((opt) => {
+      const disabled = opt.value !== "auto" && opt.value !== "none" && roleSelectionsConflict(selectedWan, "wan", opt.value, "wan2", layout);
+      return `<option value="${escapeAttr(opt.value)}" ${opt.value === selectedWan2 ? "selected" : ""} ${disabled ? "disabled" : ""}>${escapeHtml(opt.label)}</option>`;
+    }).join("")}
+        </select>
+        <div class="hint">${escapeHtml(this._t("editor_wan2_port_hint"))}</div>
+      </div>
+    `;
+  }
+  _styles() {
+    return `<style>
+      :host {
+        display: block;
+      }
+
+      .wrap {
+        display: grid;
+        gap: 14px;
+      }
+
+      .main-step,
+      .color-step {
+        display: grid;
+        gap: 14px;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      .section-title {
+        font-size: 0.95rem;
+        font-weight: 700;
+        margin: 2px 0 0;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .disabled-field {
+        opacity: .55;
+      }
+
+      .step-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .step-footer {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .opacity-field {
+        margin-bottom: 8px;
+      }
+
+      label {
+        font-weight: 600;
+      }
+
+      select,
+      input[type="text"] {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--divider-color);
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font: inherit;
+      }
+
+      input[type="color"] {
+        width: 100%;
+        min-height: 44px;
+        border-radius: 10px;
+        border: 1px solid var(--divider-color);
+        background: var(--card-background-color);
+      }
+
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 500;
+      }
+
+      .checkbox-row input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        margin: 0;
+      }
+
+      .hint {
+        color: var(--secondary-text-color);
+        font-size: 0.82rem;
+      }
+
+      .nav-btn {
+        border: 1px solid var(--divider-color);
+        border-radius: 10px;
+        padding: 8px 12px;
+        background: var(--primary-color);
+        color: #fff;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 600;
+      }
+
+      .nav-btn.secondary {
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+      }
+
+      .nav-btn.danger {
+        background: var(--error-color);
+      }
+
+      .color-grid {
+        display: grid;
+        gap: 8px;
+      }
+
+      .color-slot-btn {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border: 1px solid var(--divider-color);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .color-slot-btn.disabled {
+        opacity: .55;
+        cursor: not-allowed;
+      }
+
+      .swatch {
+        width: 28px;
+        height: 18px;
+        border-radius: 6px;
+        border: 1px solid rgba(0,0,0,.25);
+      }
+
+      .color-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,.35);
+        z-index: 999;
+      }
+
+      .color-modal {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: min(420px, calc(100vw - 30px));
+        z-index: 1000;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 12px;
+        padding: 14px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .port-toggle-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .port-toggle-details summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      .port-toggle-details[open] summary {
+        margin-bottom: 10px;
+      }
+
+      .nested-field {
+        display: grid;
+        gap: 6px;
+        margin-top: 10px;
+        padding-left: 12px;
+        border-left: 2px solid var(--divider-color);
+      }
+
+      .port-toggle {
+        border: 1px solid var(--divider-color);
+        border-radius: 999px;
+        padding: 6px 10px;
+        font: inherit;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        cursor: pointer;
+      }
+
+      .port-toggle.selected {
+        border-color: var(--primary-color);
+        background: color-mix(in srgb, var(--primary-color) 18%, var(--card-background-color));
+      }
+
+      .warn {
+        border-radius: 12px;
+        padding: 12px 14px;
+        background: rgba(245, 158, 11, 0.12);
+        border: 1px solid rgba(245, 158, 11, 0.35);
+        color: var(--primary-text-color);
+      }
+
+      .warn.loading {
+        background: rgba(59, 130, 246, 0.12);
+        border-color: rgba(59, 130, 246, 0.35);
+      }
+
+      .warn-title {
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      .warn-body,
+      .warn-status,
+      .warn-path {
+        font-size: 0.9rem;
+        line-height: 1.45;
+      }
+
+      .warn ul {
+        margin: 10px 0 10px 18px;
+        padding: 0;
+      }
+
+      .warn li {
+        margin: 4px 0;
+      }
+
+      .empty,
+      .error {
+        font-size: 0.92rem;
+      }
+
+      .error {
+        color: var(--error-color);
+      }
+    </style>`;
+  }
+  _captureFocusState() {
+    if (!this.shadowRoot) return null;
+    const active = this.shadowRoot.activeElement;
+    if (!active || !active.id) return null;
+    const supportsSelection = typeof active.selectionStart === "number" && typeof active.selectionEnd === "number";
+    return {
+      id: active.id,
+      selectionStart: supportsSelection ? active.selectionStart : null,
+      selectionEnd: supportsSelection ? active.selectionEnd : null,
+      selectionDirection: supportsSelection ? active.selectionDirection : null
+    };
+  }
+  _restoreFocusState(focusState) {
+    if (!focusState || !this.shadowRoot) return;
+    const nextEl = this.shadowRoot.getElementById(focusState.id);
+    if (!nextEl || typeof nextEl.focus !== "function") return;
+    nextEl.focus({ preventScroll: true });
+    if (typeof nextEl.setSelectionRange === "function" && focusState.selectionStart != null && focusState.selectionEnd != null) {
+      nextEl.setSelectionRange(
+        focusState.selectionStart,
+        focusState.selectionEnd,
+        focusState.selectionDirection || "none"
+      );
+    }
+  }
+  _render() {
+    this._rendered = true;
+    const focusState = this._captureFocusState();
+    const deviceValue = this._config?.device_id || "";
+    const selectedDevice = this._devices.find((d) => d.id === deviceValue) || null;
+    const selectedType = this._deviceCtx?.type || selectedDevice?.type || null;
+    const isApDevice = selectedType === "access_point";
+    const isSwitchDevice = selectedType === "switch";
+    const isSwitchOrGateway = isSwitchDevice || selectedType === "gateway";
+    const supportsIntegratedPorts = isApDevice && this._deviceCtx?.layout?.supportsIntegratedPorts === true;
+    const supportsLayoutSelection = this._deviceCtx?.layout?.supportsIntegratedPorts === true;
+    const supportsApLayout = isApDevice || this._deviceCtx?.layout?.supportsHybridLayouts === true;
+    const deviceLayout = ["combined", "network", "ap"].includes(this._config?.device_layout) ? this._config.device_layout : this._config?.integrated_ports === false ? "ap" : "combined";
+    const nameValue = this._config?.name || "";
+    const showName = this._config?.show_name !== false;
+    const showTelemetry = this._config?.show_telemetry !== false;
+    const showProductImage = this._config?.show_product_image === true;
+    const productImageUrl = String(this._config?.product_image_url || "").trim();
+    const officialProductImage = getOfficialProductImage(this._deviceCtx?.layout?.modelKey);
+    const showPanel = this._config?.show_panel !== false;
+    const dynamicPortDetails = this._config?.dynamic_port_details === true;
+    const portLedBlink = this._config?.port_led_blink === true;
+    const portLedBlinkRj45 = this._config?.port_led_blink_rj45 !== false;
+    const portLedBlinkSfp = this._config?.port_led_blink_sfp !== false;
+    const portLedBlinkRateRj45 = portLedBlinkRate(this._config?.port_led_blink_speed_rj45 ?? this._config?.port_led_blink_speed);
+    const portLedBlinkRateSfp = portLedBlinkRate(this._config?.port_led_blink_speed_sfp ?? this._config?.port_led_blink_speed);
+    const forceSequentialPorts = this._config?.force_sequential_ports === true;
+    const backgroundOpacity = clampOpacity(this._config?.background_opacity);
+    const colorStepOpen = this._editorStep === "colors";
+    const activeColorSlot = COLOR_SLOT_BY_KEY[this._activeColorSlot] || null;
+    const activeParsedColor = parseColorWithAlpha(this._draftColors[this._activeColorSlot] || "") || null;
+    const activeRawColorValue = activeColorSlot ? this._draftColors[activeColorSlot.key] || activeColorSlot.fallback || "" : "";
+    const activePickerHex = this._resolveSlotPickerHex(activeColorSlot);
+    const portsPerRow = this._config?.ports_per_row || "";
+    const portSize = clampPortSize(this._config?.port_size);
+    const apScale = clampApScale(this._config?.ap_scale);
+    const apCompactView = this._config?.ap_compact_view === true;
+    const apCompactShowHeaderTelemetry = showTelemetry && this._config?.ap_compact_show_header_telemetry === true;
+    const meshSignalEntity = String(this._config?.mesh_signal_entity || "").trim();
+    const detectedMeshSignalEntity = String(this._deviceCtx?.mesh_signal_entity || "").trim();
+    const meshSignalSuggestions = Object.entries(this._hass?.states || {}).filter(([entityId, state]) => {
+      if (!entityId.startsWith("sensor.")) return false;
+      const attrs = state?.attributes || {};
+      const text = `${entityId} ${attrs.friendly_name || ""} ${attrs.device_class || ""} ${attrs.unit_of_measurement || ""}`.toLowerCase();
+      return attrs.device_class === "signal_strength" || String(attrs.unit_of_measurement || "").toLowerCase() === "dbm" || /(?:mesh|uplink|backhaul|rssi|signal)/.test(text);
+    }).map(([entityId]) => entityId).sort();
+    const editSpecialPorts = this._config?.edit_special_ports === true || !!this._config?.wan_port || !!this._config?.wan2_port;
+    const availablePortSlots = mergePortsWithLayout(this._deviceCtx?.layout, this._deviceCtx?.numberedPorts || []);
+    const discoveredPorts = availablePortSlots.map((slot) => slot?.port).filter((port) => Number.isInteger(port) && port > 0);
+    const selectableSpecialPorts = Array.from(
+      /* @__PURE__ */ new Set([...collectLayoutPorts(this._deviceCtx?.layout), ...discoveredPorts])
+    ).sort((a, b) => a - b);
+    const customSpecialPortOptions = selectableSpecialPorts;
+    const selectedTrustedLinkSpeedPorts = normalizeSpecialPortNumbers(this._config?.trust_link_speed_ports);
+    const selectedSpecialPorts = editSpecialPorts ? resolveSelectedSpecialPorts(this._config, this._deviceCtx?.layout) : [];
+    const apLedColorDisabled = isApDevice && this._apHasRgbLedControl();
+    const buttonThemeStyle = this._draftButtonThemeStyle !== false;
+    const buttonDefaultColor = this._draftButtonDefaultColor !== false;
+    const buttonCustomActive = !buttonThemeStyle && !buttonDefaultColor;
+    const visibleColorSlots = COLOR_SLOTS.filter((slot) => {
+      if (slot.key === "background_color") return true;
+      if (isApDevice) {
+        return !["port_label_color", "special_port_label_color"].includes(slot.key);
+      }
+      return slot.key !== "ap_led_color";
+    });
+    this.shadowRoot.innerHTML = `
+      ${this._styles()}
+      <div class="wrap">
+        <div class="main-step ${colorStepOpen ? "hidden" : ""}">
+        <div class="section-title">${escapeHtml(this._t("editor_device_title"))}</div>
+
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_device_label"))}</label>
+          <select id="device_id">
+            <option value="">${escapeHtml(this._t("editor_device_select"))}</option>
+            ${this._devices.map(
+      (device) => `<option value="${escapeAttr(device.id)}" ${device.id === deviceValue ? "selected" : ""}>${escapeHtml(device.label)}</option>`
+    ).join("")}
+          </select>
+          <div class="hint">${this._loading ? escapeHtml(this._t("editor_device_loading")) : this._devices.length ? escapeHtml(this._t("editor_hint")) : escapeHtml(this._error || this._t("editor_no_devices"))}</div>
+        </div>
+
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_name_toggle_label"))}</label>
+          <label class="checkbox-row">
+            <input id="show_name" type="checkbox" ${showName ? "checked" : ""}>
+            <span>${escapeHtml(this._t("editor_name_toggle_text"))}</span>
+          </label>
+          <div class="hint">${escapeHtml(this._t("editor_name_toggle_hint"))}</div>
+        </div>
+
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_name_label"))}</label>
+          <input id="name" type="text" value="${escapeAttr(nameValue)}" ${showName ? "" : "disabled"}>
+          <div class="hint">${escapeHtml(this._t("editor_name_hint"))}</div>
+        </div>
+
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_telemetry_toggle_label"))}</label>
+          <label class="checkbox-row">
+            <input id="show_telemetry" type="checkbox" ${showTelemetry ? "checked" : ""}>
+            <span>${escapeHtml(this._t("editor_telemetry_toggle_text"))}</span>
+          </label>
+          <div class="hint">${escapeHtml(this._t("editor_telemetry_toggle_hint"))}</div>
+        </div>
+
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_product_image_toggle_label"))}</label>
+          <label class="checkbox-row">
+            <input id="show_product_image" type="checkbox" ${showProductImage ? "checked" : ""}>
+            <span>${escapeHtml(this._t("editor_product_image_toggle_text"))}</span>
+          </label>
+          <div class="hint">${escapeHtml(officialProductImage ? this._t("editor_product_image_available").replace("{model}", officialProductImage.name) : this._t("editor_product_image_unavailable"))}</div>
+        </div>
+
+        ${showProductImage ? `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_product_image_url_label"))}</label>
+          <input id="product_image_url" type="text" value="${escapeAttr(productImageUrl)}" placeholder="/local/unifi/my-device.png">
+          <div class="hint">${escapeHtml(this._t("editor_product_image_url_hint"))}</div>
+        </div>` : ""}
+
+        ${isSwitchOrGateway ? `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_panel_toggle_label"))}</label>
+          <label class="checkbox-row">
+            <input id="show_panel" type="checkbox" ${showPanel ? "checked" : ""}>
+            <span>${escapeHtml(this._t("editor_panel_toggle_text"))}</span>
+          </label>
+          <div class="hint">${escapeHtml(this._t("editor_panel_toggle_hint"))}</div>
+        </div>` : ""}
+
+        ${isSwitchOrGateway || supportsIntegratedPorts ? `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_dynamic_port_details_label"))}</label>
+          <label class="checkbox-row">
+            <input id="dynamic_port_details" type="checkbox" ${dynamicPortDetails ? "checked" : ""}>
+            <span>${escapeHtml(this._t("editor_dynamic_port_details_text"))}</span>
+          </label>
+          <div class="hint">${escapeHtml(this._t("editor_dynamic_port_details_hint"))}</div>
+        </div>` : ""}
+
+        ${isSwitchOrGateway || supportsIntegratedPorts ? `
+        <div class="field">
+          <details id="port_led_blink_details" class="port-toggle-details" ${this._portLedBlinkExpanded ? "open" : ""}>
+            <summary>${escapeHtml(this._t("editor_port_led_blink_label"))}</summary>
+            <label class="checkbox-row">
+              <input id="port_led_blink" type="checkbox" ${portLedBlink ? "checked" : ""}>
+              <span>${escapeHtml(this._t("editor_port_led_blink_text"))}</span>
+            </label>
+            ${portLedBlink ? `
+              ${[["rj45", portLedBlinkRj45, portLedBlinkRateRj45], ["sfp", portLedBlinkSfp, portLedBlinkRateSfp]].map(([media, enabled, rate]) => `
+                <div class="nested-field">
+                  <label class="checkbox-row">
+                    <input id="port_led_blink_${media}" type="checkbox" ${enabled ? "checked" : ""}>
+                    <span>${escapeHtml(this._t(`editor_port_led_blink_${media}_text`))}</span>
+                  </label>
+                  ${enabled ? `
+                    <label for="port_led_blink_speed_${media}">${escapeHtml(this._t("editor_port_led_blink_speed_label"))}: <span id="port_led_blink_rate_${media}">${escapeHtml(rate)}\xD7/s</span></label>
+                    <input id="port_led_blink_speed_${media}" type="range" min="1" max="10" step="1" value="${escapeAttr(rate)}">
+                  ` : ""}
+                </div>
+              `).join("")}
+            ` : ""}
+            <div class="hint">${escapeHtml(this._t("editor_port_led_blink_hint"))}</div>
+          </details>
+        </div>` : ""}
+
+        ${isSwitchDevice || supportsIntegratedPorts ? `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_ports_per_row_label"))}</label>
+          <input id="ports_per_row" type="text" inputmode="numeric" value="${escapeAttr(portsPerRow)}">
+          <div class="hint">${escapeHtml(this._t("editor_ports_per_row_hint"))}</div>
+        </div>` : ""}
+
+        ${isSwitchOrGateway || supportsIntegratedPorts ? `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_port_size_label"))}: ${escapeHtml(portSize)}px</label>
+          <input id="port_size" type="range" min="24" max="52" step="1" value="${escapeAttr(portSize)}">
+          <div class="hint">${escapeHtml(this._t("editor_port_size_hint"))}</div>
+        </div>` : ""}
+
+        ${isSwitchOrGateway || supportsIntegratedPorts ? `
+        <div class="field">
+          <details id="trust_link_speed_ports_details" class="port-toggle-details" ${this._trustLinkSpeedPortsExpanded ? "open" : ""}>
+            <summary>${escapeHtml(this._t("editor_trust_link_speed_ports_label"))}</summary>
+            <div id="trust_link_speed_ports_list" class="port-toggle-list">
+              ${selectableSpecialPorts.map((port) => `<button type="button" class="port-toggle ${selectedTrustedLinkSpeedPorts.includes(port) ? "selected" : ""}" data-port="${escapeAttr(port)}">${escapeHtml(this._t("port_label"))} ${escapeHtml(port)}</button>`).join("")}
+            </div>
+            <div class="hint">${escapeHtml(this._t("editor_trust_link_speed_ports_hint"))}</div>
+          </details>
+        </div>` : ""}
+
+        ${supportsLayoutSelection ? `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_device_layout_label"))}</label>
+          <select id="device_layout">
+            <option value="combined" ${deviceLayout === "combined" ? "selected" : ""}>${escapeHtml(this._t("editor_device_layout_combined"))}</option>
+            <option value="network" ${deviceLayout === "network" ? "selected" : ""}>${escapeHtml(this._t("editor_device_layout_network"))}</option>
+            <option value="ap" ${deviceLayout === "ap" ? "selected" : ""}>${escapeHtml(this._t("editor_device_layout_ap"))}</option>
+          </select>
+          <div class="hint">${escapeHtml(this._t("editor_device_layout_hint"))}</div>
+        </div>` : ""}
+
+        ${supportsApLayout ? `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_mesh_signal_entity_label"))}</label>
+          <input id="mesh_signal_entity" type="text" list="mesh_signal_entity_options" value="${escapeAttr(meshSignalEntity)}" placeholder="${escapeAttr(detectedMeshSignalEntity || "sensor.example_mesh_signal")}">
+          <datalist id="mesh_signal_entity_options">
+            ${meshSignalSuggestions.map((entityId) => `<option value="${escapeAttr(entityId)}"></option>`).join("")}
+          </datalist>
+          <div class="hint">${escapeHtml(this._t("editor_mesh_signal_entity_hint"))}${detectedMeshSignalEntity ? ` ${escapeHtml(this._t("editor_mesh_signal_detected").replace("{entity}", detectedMeshSignalEntity))}` : ""}</div>
+        </div>
+
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_ap_compact_toggle_label"))}</label>
+          <label class="checkbox-row">
+            <input id="ap_compact_view" type="checkbox" ${apCompactView ? "checked" : ""}>
+            <span>${escapeHtml(this._t("editor_ap_compact_toggle_text"))}</span>
+          </label>
+          <div class="hint">${escapeHtml(this._t("editor_ap_compact_toggle_hint"))}</div>
+        </div>
+
+        ${apCompactView ? `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_ap_compact_header_telemetry_label"))}</label>
+          <label class="checkbox-row">
+            <input id="ap_compact_show_header_telemetry" type="checkbox" ${apCompactShowHeaderTelemetry ? "checked" : ""} ${showTelemetry ? "" : "disabled"}>
+            <span>${escapeHtml(this._t("editor_ap_compact_header_telemetry_text"))}</span>
+          </label>
+          <div class="hint">${escapeHtml(this._t("editor_ap_compact_header_telemetry_hint"))}</div>
+        </div>` : ""}
+
+        ${!apCompactView ? `
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_ap_scale_label"))}: ${escapeHtml(apScale)}%</label>
+          <input id="ap_scale" type="range" min="25" max="140" step="1" value="${escapeAttr(apScale)}">
+          <div class="hint">${escapeHtml(this._t("editor_ap_scale_hint"))}</div>
+        </div>` : ""}` : ""}
+
+        ${isSwitchOrGateway ? `
+        <div class="field">
+          <label class="checkbox-row">
+            <input id="edit_special_ports" type="checkbox" ${editSpecialPorts ? "checked" : ""}>
+            <span>${escapeHtml(this._t("editor_edit_special_ports_toggle"))}</span>
+          </label>
+          <div class="hint">${escapeHtml(this._t("editor_edit_special_ports_toggle_hint"))}</div>
+        </div>
+
+        ${editSpecialPorts ? `
+        ${this._gatewayControlsHTML(true)}
+
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_custom_special_ports_label"))}</label>
+          <div id="special_ports_list" class="port-toggle-list">
+            ${selectableSpecialPorts.map((port) => `<button type="button" class="port-toggle ${selectedSpecialPorts.includes(port) ? "selected" : ""}" data-port="${escapeAttr(port)}">${escapeHtml(this._t("port_label"))} ${escapeHtml(port)}</button>`).join("")}
+          </div>
+          <div class="hint">${escapeHtml(this._t("editor_custom_special_ports_hint"))}</div>
+        </div>` : ""}
+
+        <div class="field">
+          <label class="checkbox-row">
+            <input id="force_sequential_ports" type="checkbox" ${forceSequentialPorts ? "checked" : ""}>
+            <span>${escapeHtml(this._t("editor_force_sequential_ports_label"))}</span>
+          </label>
+          <div class="hint">${escapeHtml(this._t("editor_force_sequential_ports_hint"))}</div>
+        </div>
+        ` : ""}
+
+        <div class="field">
+          <button type="button" class="nav-btn" id="open_color_editor">${escapeHtml(this._t("editor_colors_open"))}</button>
+          <div class="hint">${escapeHtml(this._t("editor_colors_open_hint"))}</div>
+        </div>
+
+        <div id="warning_slot">${this._warningHTML()}${this._unavailableTelemetryHTML()}</div>
+        </div>
+
+        <div class="color-step ${colorStepOpen ? "" : "hidden"}">
+          <div class="step-header">
+            <button type="button" class="nav-btn secondary" id="back_from_color_editor">\u2190 ${escapeHtml(this._t("editor_colors_back"))}</button>
+            <button type="button" class="nav-btn danger" id="reset_all_colors">${escapeHtml(this._t("editor_colors_reset_all"))}</button>
+          </div>
+          <div class="hint">${escapeHtml(this._t("editor_colors_step_hint"))}</div>
+          <div class="field opacity-field">
+            <label>${escapeHtml(this._t("editor_bg_opacity_label"))}: ${escapeHtml(backgroundOpacity)}%</label>
+            <input
+              id="background_opacity"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value="${escapeAttr(backgroundOpacity)}"
+            >
+            <div class="hint">${escapeHtml(this._t("editor_bg_opacity_hint"))}</div>
+          </div>
+          <div class="field">
+            <label>${escapeHtml(this._t("editor_color_slot_background"))}</label>
+            <button type="button" class="color-slot-btn" data-slot="background_color">
+              <span class="swatch" style="background:${escapeAttr(this._draftColors.background_color || "var(--card-background-color)")}"></span>
+              <span>${escapeHtml(this._draftColors.background_color || this._t("editor_colors_default_value"))}</span>
+            </button>
+          </div>
+          <div class="field">
+            <label class="checkbox-row">
+              <input id="button_theme_style" type="checkbox" ${buttonThemeStyle ? "checked" : ""}>
+              <span>${escapeHtml(this._t("editor_button_theme_style_label"))}</span>
+            </label>
+            <div class="hint">${escapeHtml(this._t("editor_button_theme_style_hint"))}</div>
+          </div>
+          <div class="field ${buttonThemeStyle ? "disabled-field" : ""}">
+            <label class="checkbox-row">
+              <input id="button_default_color" type="checkbox" ${buttonDefaultColor ? "checked" : ""} ${buttonThemeStyle ? "disabled" : ""}>
+              <span>${escapeHtml(this._t("editor_button_default_color_label"))}</span>
+            </label>
+            <div class="hint">${escapeHtml(this._t("editor_button_default_color_hint"))}</div>
+          </div>
+          <div class="color-grid">
+            ${visibleColorSlots.filter((slot) => slot.key !== "background_color").map((slot) => {
+      const disabled = slot.key === "ap_led_color" && apLedColorDisabled || slot.key.startsWith("button_") && !buttonCustomActive;
+      return `
+              <button type="button" class="color-slot-btn ${disabled ? "disabled" : ""}" data-slot="${escapeAttr(slot.key)}" ${disabled ? "disabled" : ""}>
+                <span>${escapeHtml(colorSlotLabel((k) => this._t(k), slot.key))}</span>
+                <span class="swatch" style="background:${escapeAttr(this._draftColors[slot.key] || slot.fallback)}"></span>
+              </button>
+              ${disabled ? `<span class="hint">${escapeHtml(this._t("editor_ap_led_color_disabled_hint"))}</span>` : ""}
+            `;
+    }).join("")}
+          </div>
+          <div class="step-footer">
+            <button type="button" class="nav-btn" id="apply_color_editor">${escapeHtml(this._t("editor_colors_apply"))}</button>
+          </div>
+          ${activeColorSlot ? `
+            <div class="color-modal-backdrop" id="close_color_dialog"></div>
+            <div class="color-modal">
+              <div class="section-title">${escapeHtml(colorSlotLabel((k) => this._t(k), activeColorSlot.key))}</div>
+              <input id="color_picker_hex" type="color" value="${escapeAttr(activePickerHex)}">
+              <input id="color_picker_raw" type="text" value="${escapeAttr(activeRawColorValue)}">
+              <div class="step-header">
+                <button type="button" class="nav-btn secondary" id="reset_color_slot">${escapeHtml(this._t("editor_colors_reset_slot"))}</button>
+                <button type="button" class="nav-btn" id="close_color_picker">${escapeHtml(this._t("editor_colors_done"))}</button>
+              </div>
+            </div>
+          ` : ""}
+        </div>
+      </div>
+    `;
+    this.shadowRoot.getElementById("device_id")?.addEventListener("change", (ev) => this._onDeviceChange(ev));
+    this.shadowRoot.getElementById("show_name")?.addEventListener("change", (ev) => this._onShowNameChange(ev));
+    this.shadowRoot.getElementById("show_telemetry")?.addEventListener("change", (ev) => this._onShowTelemetryChange(ev));
+    this.shadowRoot.getElementById("show_product_image")?.addEventListener("change", (ev) => this._onShowProductImageChange(ev));
+    this.shadowRoot.getElementById("product_image_url")?.addEventListener("change", (ev) => this._onProductImageUrlChange(ev));
+    this.shadowRoot.getElementById("mesh_signal_entity")?.addEventListener("change", (ev) => this._onMeshSignalEntityChange(ev));
+    this.shadowRoot.getElementById("show_panel")?.addEventListener("change", (ev) => this._onShowPanelChange(ev));
+    this.shadowRoot.getElementById("dynamic_port_details")?.addEventListener("change", (ev) => this._onDynamicPortDetailsChange(ev));
+    this.shadowRoot.getElementById("port_led_blink")?.addEventListener("change", (ev) => this._onPortLedBlinkChange(ev));
+    for (const media of ["rj45", "sfp"]) {
+      this.shadowRoot.getElementById(`port_led_blink_${media}`)?.addEventListener("change", (ev) => this._onPortLedBlinkMediaChange(media, ev.target.checked));
+      const speedSlider = this.shadowRoot.getElementById(`port_led_blink_speed_${media}`);
+      speedSlider?.addEventListener("input", (ev) => {
+        const value = this.shadowRoot.getElementById(`port_led_blink_rate_${media}`);
+        if (value) value.textContent = `${ev.target.value}\xD7/s`;
+      });
+      speedSlider?.addEventListener("change", (ev) => this._emitConfig({
+        [`port_led_blink_speed_${media}`]: portLedBlinkSpeedFromRate(ev.target.value)
+      }));
+    }
+    this.shadowRoot.getElementById("port_led_blink_details")?.addEventListener("toggle", (ev) => {
+      this._portLedBlinkExpanded = ev.target.open;
+    });
+    this.shadowRoot.getElementById("name")?.addEventListener("input", (ev) => this._onNameInput(ev));
+    this.shadowRoot.getElementById("ports_per_row")?.addEventListener("input", (ev) => this._onPortsPerRowChange(ev));
+    this.shadowRoot.getElementById("force_sequential_ports")?.addEventListener("change", (ev) => this._onForceSequentialPortsChange(ev));
+    this.shadowRoot.getElementById("port_size")?.addEventListener("change", (ev) => this._onPortSizeInput(ev));
+    this.shadowRoot.getElementById("ap_scale")?.addEventListener("change", (ev) => this._onApScaleInput(ev));
+    this.shadowRoot.getElementById("device_layout")?.addEventListener("change", (ev) => this._emitConfig({
+      device_layout: ev.target.value === "combined" ? void 0 : ev.target.value,
+      integrated_ports: void 0
+    }));
+    this.shadowRoot.getElementById("ap_compact_view")?.addEventListener("change", (ev) => this._onApCompactViewChange(ev));
+    this.shadowRoot.getElementById("ap_compact_show_header_telemetry")?.addEventListener("change", (ev) => this._onApCompactHeaderTelemetryChange(ev));
+    this.shadowRoot.getElementById("background_opacity")?.addEventListener("change", (ev) => this._onBackgroundOpacityInput(ev));
+    this.shadowRoot.getElementById("button_theme_style")?.addEventListener("change", (ev) => this._onButtonThemeStyleChange(ev));
+    this.shadowRoot.getElementById("button_default_color")?.addEventListener("change", (ev) => this._onButtonDefaultColorChange(ev));
+    this.shadowRoot.getElementById("wan_port")?.addEventListener("change", (ev) => this._onWanPortChange(ev));
+    this.shadowRoot.getElementById("wan2_port")?.addEventListener("change", (ev) => this._onWan2PortChange(ev));
+    this.shadowRoot.getElementById("edit_special_ports")?.addEventListener("change", (ev) => this._onEditSpecialPortsChange(ev));
+    this.shadowRoot.getElementById("special_ports_list")?.addEventListener("click", (ev) => this._onSpecialPortToggle(ev));
+    this.shadowRoot.getElementById("trust_link_speed_ports_list")?.addEventListener("click", (ev) => this._onTrustLinkSpeedPortToggle(ev));
+    this.shadowRoot.getElementById("trust_link_speed_ports_details")?.addEventListener("toggle", (ev) => {
+      this._trustLinkSpeedPortsExpanded = ev.target.open;
+    });
+    this.shadowRoot.getElementById("open_color_editor")?.addEventListener("click", () => this._onOpenColorStep());
+    this.shadowRoot.getElementById("back_from_color_editor")?.addEventListener("click", () => this._onBackFromColorStep());
+    this.shadowRoot.getElementById("reset_all_colors")?.addEventListener("click", () => this._onResetAllColors());
+    this.shadowRoot.getElementById("apply_color_editor")?.addEventListener("click", () => this._onApplyDraftColors());
+    this.shadowRoot.querySelectorAll(".color-slot-btn").forEach((btn) => btn.addEventListener("click", (ev) => this._onOpenColorDialog(ev)));
+    this.shadowRoot.getElementById("close_color_dialog")?.addEventListener("click", () => this._onCloseColorDialog());
+    this.shadowRoot.getElementById("close_color_picker")?.addEventListener("click", () => this._onCloseColorDialog());
+    this.shadowRoot.getElementById("color_picker_hex")?.addEventListener("change", (ev) => this._onDraftColorHexInput(ev));
+    this.shadowRoot.getElementById("color_picker_raw")?.addEventListener("change", (ev) => this._onDraftColorRawInput(ev));
+    this.shadowRoot.getElementById("reset_color_slot")?.addEventListener("click", () => this._onResetSlotColor());
+    this._restoreFocusState(focusState);
+  }
+  _patchWarning() {
+    if (!this._rendered || !this.shadowRoot) return;
+    const slot = this.shadowRoot.getElementById("warning_slot");
+    if (!slot) return;
+    slot.innerHTML = `${this._warningHTML()}${this._unavailableTelemetryHTML()}`;
+  }
+  _patchFields() {
+    if (!this._rendered || !this.shadowRoot) return;
+    this._render();
+  }
+};
+if (!customElements.get("unifi-device-card-editor")) {
+  customElements.define("unifi-device-card-editor", UnifiDeviceCardEditor);
+}
+
+// src/unifi-device-card.js
+var VERSION = "0.8.4-local";
+var DEV_LOG_FLAG = "__UNIFI_DEVICE_CARD_VERSION_LOGGED__";
+var LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3, trace: 4 };
+var CONTEXT_REFRESH_INTERVAL = 31e3;
+var LOG_STYLES = {
+  badge: "background:#00AEEF;color:#fff;padding:2px 6px;border-radius:2px;font-weight:700;",
+  version: "background:#2a2a2a;color:#fff;padding:2px 6px;border-radius:2px;font-weight:700;",
+  error: "color:#ff5f56;font-weight:700;",
+  warn: "color:#ffbd2e;font-weight:700;",
+  info: "color:#9effa1;font-weight:700;",
+  debug: "color:#8ab4f8;font-weight:700;",
+  trace: "color:#caa7ff;font-weight:700;"
+};
+var UnifiDeviceCard = class extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement("unifi-device-card-editor");
+  }
+  static getStubConfig() {
+    return {};
+  }
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._ctx = null;
+    this._selectedKey = null;
+    this._loading = false;
+    this._loadToken = 0;
+    this._loadedDeviceId = null;
+    this._contextLoadedAt = 0;
+    this._resizeObserver = null;
+    this._uptimeRefreshTimer = null;
+    this._lastMeasuredWidth = 0;
+    this._lastMeasuredPanelWidth = 0;
+    this._cardSize = 8;
+    this._instanceId = Math.random().toString(36).slice(2, 7);
+    this._failedProductImageSrc = "";
+    this._productImageView = "front";
+    this._sfpConnectedSeen = /* @__PURE__ */ new Set();
+  }
+  _configuredLogLevel() {
+    const raw = String(this._config?.log_level || "").toLowerCase().trim();
+    if (raw && Object.prototype.hasOwnProperty.call(LOG_LEVELS, raw)) return raw;
+    if (this._config?.debug === true) return "debug";
+    return "warn";
+  }
+  _shouldLog(level) {
+    const target = LOG_LEVELS[this._configuredLogLevel()];
+    const current = LOG_LEVELS[level];
+    if (current == null || target == null) return false;
+    return current <= target;
+  }
+  _log(level, message, ...args) {
+    if (!this._shouldLog(level)) return;
+    const fn = level === "error" ? "error" : level === "warn" ? "warn" : "log";
+    const levelLabel = level.toUpperCase();
+    const device = this._config?.device_id ? ` ${this._config.device_id}` : "";
+    const header = `%cUNIFI-DEVICE-CARD%c ${levelLabel}%c${device} #${this._instanceId}`;
+    console[fn](
+      header,
+      LOG_STYLES.badge,
+      LOG_STYLES[level] || LOG_STYLES.info,
+      LOG_STYLES.version,
+      message,
+      ...args
+    );
+  }
+  _numericState(entityId) {
+    if (!entityId || !this._hass?.states) return null;
+    const raw = this._hass.states[entityId]?.state;
+    if (raw == null || raw === "unknown" || raw === "unavailable") return null;
+    const n = Number.parseFloat(String(raw).replace(",", "."));
+    return Number.isFinite(n) ? n : null;
+  }
+  _buildPortDebugSnapshot(ctx) {
+    if (!ctx || ctx.type !== "switch" && ctx.type !== "gateway") {
+      return {
+        summary: null,
+        ports: []
+      };
+    }
+    const slotData = this._buildSlotData(ctx);
+    const ports = [...slotData?.specials || [], ...slotData?.numbered || []].filter((slot) => Number.isInteger(slot?.port)).sort((a, b) => a.port - b.port);
+    let connected = 0;
+    let poePorts = 0;
+    let trafficPorts = 0;
+    let poeTotalW = 0;
+    const details = ports.map((slot) => {
+      const linkUp = this._isPortConnected(slot);
+      if (linkUp) connected += 1;
+      const poeStatus = getPoeStatus(this._hass, slot);
+      if (poeStatus.active) poePorts += 1;
+      const poeNum = this._numericState(slot?.poe_power_entity);
+      if (poeNum != null && poeNum > 0) poeTotalW += poeNum;
+      const rx = this._numericState(slot?.rx_entity) || 0;
+      const tx = this._numericState(slot?.tx_entity) || 0;
+      const traffic = rx + tx;
+      if (traffic > 0) trafficPorts += 1;
+      return {
+        port: slot.port,
+        link: linkUp ? "up" : "down",
+        speed: getPortSpeedText(this._hass, slot) || null,
+        poe: poeStatus.active ? poeStatus.power || "on" : "off",
+        rx,
+        tx
+      };
+    });
+    const topTraffic = [...details].sort((a, b) => b.rx + b.tx - (a.rx + a.tx)).filter((row) => row.rx + row.tx > 0).slice(0, 5).map((row) => ({
+      port: row.port,
+      rx: row.rx,
+      tx: row.tx
+    }));
+    return {
+      summary: {
+        ports_total: ports.length,
+        ports_connected: connected,
+        ports_with_poe: poePorts,
+        poe_total_w: Number(poeTotalW.toFixed(2)),
+        ports_with_traffic: trafficPorts
+      },
+      ports: details,
+      top_traffic: topTraffic
+    };
+  }
+  connectedCallback() {
+    if (this._resizeObserver) return;
+    this._resizeObserver = new ResizeObserver(() => {
+      const nextWidth = this._measuredCardWidth();
+      if (Math.abs(nextWidth - this._lastMeasuredWidth) < 1) return;
+      this._lastMeasuredWidth = nextWidth;
+      this._render();
+    });
+    this._resizeObserver.observe(this);
+    this._syncUptimeRefreshTimer();
+  }
+  disconnectedCallback() {
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
+    this._panelObserver?.disconnect();
+    this._panelObserver = null;
+    this._observedFrontPanel = null;
+    this._clearUptimeRefreshTimer();
+  }
+  setConfig(config) {
+    const oldDeviceId = this._config?.device_id || null;
+    const oldFakeMode = this._config?.fake_device === true;
+    const oldProductImageKey = [
+      oldDeviceId,
+      this._config?.show_product_image === true,
+      String(this._config?.product_image_url || "").trim()
+    ].join("|");
+    const newConfig = { ...config || {} };
+    const trustLinkSpeedPorts = normalizePositivePortNumbers(newConfig.trust_link_speed_ports);
+    if (trustLinkSpeedPorts.length) {
+      newConfig.trust_link_speed_ports = trustLinkSpeedPorts;
+    } else {
+      delete newConfig.trust_link_speed_ports;
+    }
+    const portNames = normalizePortNames(newConfig.port_name);
+    if (Object.keys(portNames).length) {
+      newConfig.port_name = portNames;
+    } else {
+      delete newConfig.port_name;
+    }
+    const newDeviceId = newConfig?.device_id || null;
+    const newFakeMode = newConfig?.fake_device === true;
+    const newProductImageKey = [
+      newDeviceId,
+      newConfig?.show_product_image === true,
+      String(newConfig?.product_image_url || "").trim()
+    ].join("|");
+    const dynamicPortDetailsEnabled = newConfig.dynamic_port_details === true;
+    const dynamicPortDetailsWasEnabled = this._config?.dynamic_port_details === true;
+    this._config = newConfig;
+    if (oldProductImageKey !== newProductImageKey) {
+      this._failedProductImageSrc = "";
+      this._productImageView = "front";
+    }
+    if (dynamicPortDetailsEnabled && !dynamicPortDetailsWasEnabled) this._selectedKey = null;
+    this._log("info", "setConfig", {
+      device_id: newDeviceId || null,
+      log_level: this._configuredLogLevel()
+    });
+    if (oldDeviceId !== newDeviceId || oldFakeMode !== newFakeMode) {
+      ++this._loadToken;
+      this._clearUptimeRefreshTimer();
+      this._ctx = null;
+      this._selectedKey = null;
+      this._loadedDeviceId = null;
+      this._contextLoadedAt = 0;
+      this._loading = false;
+      if (this._hass && newDeviceId) {
+        this._ensureLoaded();
+        return;
+      }
+    }
+    this._render();
+  }
+  set hass(hass) {
+    const previousHass = this._hass;
+    this._hass = hass;
+    this._ensureLoaded();
+    this._log("trace", "hass update");
+    const telemetrySelectionChanged = this._refreshTelemetrySelection(previousHass);
+    if (!previousHass || !this._ctx || telemetrySelectionChanged || this._hasRelevantStateChanges(previousHass, hass)) {
+      this._render();
+    }
+  }
+  _refreshTelemetrySelection(previousHass = null) {
+    const candidates = this._ctx?.telemetry_entities;
+    if (!Array.isArray(candidates) || !candidates.length) return false;
+    if (previousHass && !candidates.some((entity) => previousHass.states?.[entity.entity_id] !== this._hass?.states?.[entity.entity_id])) {
+      return false;
+    }
+    const telemetry = getDeviceTelemetry(candidates, this._hass);
+    let changed = false;
+    for (const [key, entityId] of Object.entries(telemetry)) {
+      if (this._ctx[key] === entityId) continue;
+      this._ctx[key] = entityId;
+      changed = true;
+    }
+    return changed;
+  }
+  getCardSize() {
+    return this._cardSize || this._estimateCardSize();
+  }
+  // Sections view sizing. Derived from the device type only, never from a
+  // measurement: getGridOptions() decides the width that a measurement would
+  // read back, so feeding one in would oscillate. Whatever width the card
+  // actually receives is handled by the row repacking in _buildEffectiveRows().
+  getGridOptions() {
+    const layoutMode = this._deviceLayoutMode(this._ctx);
+    const rendersNetworkPanel = layoutMode !== "ap" && (this._ctx?.type === "switch" || this._ctx?.type === "gateway");
+    if (!rendersNetworkPanel) {
+      return { columns: 12, rows: "auto" };
+    }
+    const layout = this._ctx?.layout;
+    const rows = layout?.rows || [];
+    let widest = 0;
+    if (layout?.rj45_odd_even === true) {
+      for (let i = 0; i < rows.length; i += 2) {
+        const pair = (rows[i]?.length || 0) + (rows[i + 1]?.length || 0);
+        widest = Math.max(widest, Math.ceil(pair / 2));
+      }
+    } else {
+      widest = rows.reduce((max, row) => Math.max(max, row.length), 0);
+    }
+    const perRow = /* @__PURE__ */ new Map();
+    for (const slot of layout?.specialSlots || []) {
+      if (Number.isInteger(slot?.row)) perRow.set(slot.row, (perRow.get(slot.row) || 0) + 1);
+    }
+    const slots = widest + Math.max(0, ...perRow.values());
+    const needed = slots * (this._portSize() + 4) + 28;
+    const columns = Math.min(48, Math.max(12, Math.ceil(needed / 36)));
+    return { columns, rows: "auto" };
+  }
+  _estimateCardSize() {
+    if (!this._config?.device_id) return 4;
+    if (!this._ctx) return 5;
+    if (this._ctx?.type === "access_point" || this._ctx?.layout?.supportsHybridLayouts) {
+      if (this._apCompactViewEnabled()) return this._ctx?.ap_uplink ? 7 : 6;
+      return this._ctx?.ap_uplink ? 9 : 8;
+    }
+    const { specials, numbered } = this._buildSlotData(this._ctx);
+    const specialPortsInUse = new Set(
+      specials.map((slot) => slot?.port).filter((port) => Number.isInteger(port))
+    );
+    const visibleNumbered = numbered.filter((slot) => !specialPortsInUse.has(slot.port));
+    const panelRows = this._buildEffectiveRows(this._ctx, visibleNumbered).length + (specials.length ? 1 : 0);
+    const selected = [...specials, ...visibleNumbered].find((slot) => slot.key === this._selectedKey) || (this._config?.dynamic_port_details === true ? null : specials[0] || visibleNumbered[0]) || null;
+    const hasPoe = !!(selected?.poe_switch_entity || selected?.poe_power_entity || selected?.power_cycle_entity);
+    const hasTraffic2 = !!(selected?.rx_entity || selected?.tx_entity);
+    const productRows = this._productImageData() ? 4 : 0;
+    return Math.max(6, Math.min(20, 5 + productRows + panelRows + (hasPoe ? 1 : 0) + (hasTraffic2 ? 1 : 0)));
+  }
+  _updateCardSize() {
+    const cardEl = this.shadowRoot?.querySelector("ha-card");
+    if (!cardEl) return;
+    const measured = Math.max(1, Math.ceil(cardEl.getBoundingClientRect().height / 50));
+    const nextSize = Number.isFinite(measured) ? measured : this._estimateCardSize();
+    if (nextSize === this._cardSize) return;
+    this._cardSize = nextSize;
+  }
+  // Watch the panel itself, not only the host. The host can keep its size
+  // while the panel gains room, and a sections view resizes the card after the
+  // first paint, so a host-only observer misses the change that decides how
+  // many ports fit in a row.
+  _observeFrontPanel() {
+    const panel = this.shadowRoot?.querySelector(".frontpanel");
+    if (!panel || panel === this._observedFrontPanel) return;
+    if (!this._panelObserver) {
+      this._panelObserver = new ResizeObserver(() => {
+        if (this._maxFittableColumns() === this._renderedFittableColumns) return;
+        this._render();
+      });
+    }
+    if (this._observedFrontPanel) this._panelObserver.unobserve(this._observedFrontPanel);
+    this._observedFrontPanel = panel;
+    this._panelObserver.observe(panel);
+  }
+  _finalizeRender() {
+    requestAnimationFrame(() => {
+      this._updateCardSize();
+      const panelWidth = this._measuredFrontPanelContentWidth();
+      if (panelWidth <= 0) return;
+      this._observeFrontPanel();
+      const widthChanged = Math.abs(panelWidth - this._lastMeasuredPanelWidth) >= 1;
+      const columnsChanged = this._maxFittableColumns() !== this._renderedFittableColumns;
+      if (!widthChanged && !columnsChanged) return;
+      this._lastMeasuredPanelWidth = panelWidth;
+      this._render();
+    });
+  }
+  _t(key) {
+    return t(this._hass, key);
+  }
+  _translateState(raw) {
+    if (!raw || raw === "\u2014") return raw;
+    const key = `state_${String(raw).toLowerCase().replace(/\s+/g, "_")}`;
+    const translated = this._t(key);
+    return translated === key ? raw : translated;
+  }
+  _clearUptimeRefreshTimer() {
+    if (!this._uptimeRefreshTimer) return;
+    clearTimeout(this._uptimeRefreshTimer);
+    this._uptimeRefreshTimer = null;
+  }
+  _isTimestampUptimeEntity(entityId) {
+    if (!entityId || !this._hass) return false;
+    return isUptimeTimestampState(stateObj(this._hass, entityId));
+  }
+  _syncUptimeRefreshTimer() {
+    const needsRefresh = this.isConnected && (this._ctx?.type === "access_point" || this._ctx?.layout?.supportsHybridLayouts) && this._isTimestampUptimeEntity(this._ctx?.uptime_entity);
+    if (!needsRefresh) {
+      this._clearUptimeRefreshTimer();
+      return;
+    }
+    if (this._uptimeRefreshTimer) return;
+    const now = Date.now();
+    const nextMinuteDelay = 6e4 - now % 6e4;
+    this._uptimeRefreshTimer = setTimeout(() => {
+      this._uptimeRefreshTimer = null;
+      if (!this.isConnected) return;
+      this._render();
+    }, nextMinuteDelay || 6e4);
+  }
+  _cardBgStyle() {
+    const color = this._config?.background_color || "var(--card-background-color)";
+    const opacityRaw = Number.parseInt(this._config?.background_opacity, 10);
+    const opacity = Number.isFinite(opacityRaw) ? Math.min(100, Math.max(0, opacityRaw)) : 100;
+    if (opacity >= 100) return color;
+    return `color-mix(in srgb, ${color} ${opacity}%, transparent)`;
+  }
+  _cardChromeBgStyle() {
+    if (this._ctx?.type === "switch" || this._ctx?.type === "gateway") {
+      return this._cardBgStyle();
+    }
+    return this._cardBgStyle();
+  }
+  _customColorVars() {
+    const vars = [];
+    const buttonThemeStyle = this._config?.button_theme_style !== false;
+    const buttonDefaultColor = this._config?.button_default_color !== false;
+    if (buttonThemeStyle) {
+      vars.push("--udc-button-bg: var(--primary-color, #0090d9)");
+      vars.push("--udc-button-text-color: var(--text-primary-color, #ffffff)");
+      vars.push("--udc-button-secondary-bg: var(--card-background-color, var(--udc-surf2))");
+      vars.push("--udc-button-secondary-text-color: var(--primary-text-color, var(--udc-text))");
+      vars.push("--udc-button-border-color: var(--divider-color, var(--udc-border))");
+    } else if (!buttonDefaultColor) {
+      vars.push(`--udc-button-bg: ${this._config?.button_color || "#0090d9"}`);
+      vars.push(`--udc-button-text-color: ${this._config?.button_text_color || "#ffffff"}`);
+      vars.push(`--udc-button-secondary-bg: ${this._config?.button_secondary_color || this._config?.button_color || "var(--udc-surf2)"}`);
+      vars.push(`--udc-button-secondary-text-color: ${this._config?.button_secondary_text_color || this._config?.button_text_color || "var(--primary-text-color, var(--udc-text))"}`);
+      vars.push(`--udc-button-border-color: ${this._config?.button_border_color || "var(--udc-border)"}`);
+    }
+    const pairs = [
+      ["title_color", "--udc-title-color"],
+      ["telemetry_color", "--udc-telemetry-color"],
+      ["label_color", "--udc-label-color"],
+      ["value_color", "--udc-value-color"],
+      ["meta_color", "--udc-meta-color"],
+      ["port_label_color", "--udc-port-label-color"],
+      ["special_port_label_color", "--udc-special-port-label-color"],
+      ["ap_color", "--udc-ap-color"],
+      ["ap_ring_color", "--udc-ap-ring-color"],
+      ["ap_inner_color", "--udc-ap-inner-color"]
+    ];
+    for (const [configKey, cssVar] of pairs) {
+      const value = this._config?.[configKey];
+      if (value) vars.push(`${cssVar}: ${value}`);
+    }
+    return vars.length ? `; ${vars.join("; ")}` : "";
+  }
+  _portSize() {
+    const raw = Number.parseInt(this._config?.port_size, 10);
+    if (!Number.isFinite(raw)) return 36;
+    return Math.min(52, Math.max(24, raw));
+  }
+  _apScale() {
+    const raw = Number.parseInt(this._config?.ap_scale, 10);
+    if (!Number.isFinite(raw)) return 100;
+    return Math.min(140, Math.max(25, raw));
+  }
+  _apCompactViewEnabled() {
+    return (this._ctx?.type === "access_point" || this._ctx?.layout?.supportsHybridLayouts) && this._config?.ap_compact_view === true;
+  }
+  _telemetryEnabled() {
+    return this._config?.show_telemetry !== false;
+  }
+  _productImageData() {
+    if (this._config?.show_product_image !== true) return null;
+    const customUrl = normalizeProductImageUrl(this._config?.product_image_url);
+    const official = getOfficialProductImage(this._ctx?.layout?.modelKey);
+    if (customUrl) {
+      if (customUrl === this._failedProductImageSrc) return null;
+      return {
+        src: customUrl,
+        alt: `${this._ctx?.model || this._title() || "UniFi"} ${this._t("product_image")}`,
+        source: "",
+        presentation: "auto",
+        view: "front",
+        hasRear: false
+      };
+    }
+    if (!official) return null;
+    const frontSrc = optimizeOfficialProductImage(official.image);
+    if (frontSrc === this._failedProductImageSrc) return null;
+    let rearSrc = official.rearImage ? optimizeOfficialProductImage(official.rearImage) : "";
+    if (rearSrc === this._failedProductImageSrc) rearSrc = "";
+    const view = rearSrc && this._productImageView === "rear" ? "rear" : "front";
+    const src = view === "rear" ? rearSrc : frontSrc;
+    const presentation = official.presentation || "square";
+    const defaultScale = presentation === "wide" ? 1 : presentation === "square" ? 1.65 : 1;
+    return {
+      src,
+      alt: `${official.name} \xB7 ${this._t(view === "rear" ? "product_rear" : "product_front")}`,
+      source: official.product,
+      presentation,
+      scale: Number.isFinite(official.scale) ? official.scale : defaultScale,
+      view,
+      hasRear: !!rearSrc
+    };
+  }
+  _renderProductImage(variant = "network") {
+    const productImage = this._productImageData();
+    if (!productImage) return "";
+    const presentation = this._safeClassToken(productImage.presentation, "auto");
+    const variantClass = variant === "ap" ? "ap-product" : "network-product";
+    const officialLabel = this._t("product_image_official");
+    const viewToggle = productImage.hasRear ? `
+      <div class="product-view-toggle" role="group" aria-label="${this._escapeAttr(this._t("product_views"))}">
+        <button type="button" data-product-view="front" aria-pressed="${productImage.view === "front" ? "true" : "false"}">${this._escapeHtml(this._t("product_front"))}</button>
+        <button type="button" data-product-view="rear" aria-pressed="${productImage.view === "rear" ? "true" : "false"}">${this._escapeHtml(this._t("product_rear"))}</button>
+      </div>` : "";
+    return `
+      <figure class="product-showcase ${variantClass} product-${presentation}${productImage.hasRear ? " has-multiple-views" : ""}">
+        <img
+          class="product-image"
+          data-product-image
+          src="${this._escapeAttr(productImage.src)}"
+          alt="${this._escapeAttr(productImage.alt)}"
+          loading="lazy"
+          decoding="async"
+          referrerpolicy="no-referrer"
+          style="--product-image-scale:${this._escapeAttr(productImage.scale || 1)}"
+        >
+        ${viewToggle}
+        ${productImage.source ? `<figcaption><a href="${this._escapeAttr(productImage.source)}" target="_blank" rel="noopener noreferrer" aria-label="${this._escapeAttr(officialLabel)}" title="${this._escapeAttr(officialLabel)}">Ubiquiti \u2197</a></figcaption>` : ""}
+      </figure>`;
+  }
+  _attachProductImageHandler() {
+    const image = this.shadowRoot?.querySelector("[data-product-image]");
+    if (!image) return;
+    const markLoaded = () => image.closest(".product-showcase")?.classList.add("image-loaded");
+    const markFailed = () => {
+      this._failedProductImageSrc = image.getAttribute("src") || image.currentSrc || image.src || "";
+      if (this._productImageView === "rear") {
+        this._productImageView = "front";
+        this._render();
+        return;
+      }
+      image.closest(".product-showcase")?.classList.add("image-error");
+      requestAnimationFrame(() => this._updateCardSize());
+    };
+    image.addEventListener("load", markLoaded, { once: true });
+    image.addEventListener("error", markFailed, { once: true });
+    if (image.complete) {
+      if (image.naturalWidth > 0) markLoaded();
+      else markFailed();
+    }
+    this.shadowRoot.querySelectorAll("[data-product-view]").forEach((button) => button.addEventListener("click", () => {
+      const nextView = button.dataset.productView === "rear" ? "rear" : "front";
+      if (nextView === this._productImageView) return;
+      this._productImageView = nextView;
+      this._failedProductImageSrc = "";
+      this._render();
+    }));
+  }
+  _apCompactHeaderTelemetryEnabled() {
+    return (this._ctx?.type === "access_point" || this._ctx?.layout?.supportsHybridLayouts) && this._telemetryEnabled() && this._config?.ap_compact_show_header_telemetry === true;
+  }
+  _maxPortColumns() {
+    const rows = this._ctx?.layout?.rows || [];
+    const maxRowCols = rows.reduce((max, row) => Math.max(max, row.length || 0), 0);
+    const specialCols = (this._ctx?.layout?.specialSlots || []).length;
+    return Math.max(1, maxRowCols, specialCols);
+  }
+  _effectivePortSize() {
+    const configured = this._portSize();
+    return configured;
+  }
+  _measuredCardWidth() {
+    const hostWidth = this.getBoundingClientRect?.().width || this.offsetWidth || 0;
+    if (hostWidth > 0) return hostWidth;
+    const cardWidth = this.shadowRoot?.querySelector("ha-card")?.getBoundingClientRect?.().width || 0;
+    if (cardWidth > 0) return cardWidth;
+    return this.parentElement?.getBoundingClientRect?.().width || 0;
+  }
+  _measuredFrontPanelContentWidth() {
+    const frontPanel = this.shadowRoot?.querySelector(".frontpanel");
+    if (!frontPanel) return 0;
+    const panelWidth = frontPanel.getBoundingClientRect?.().width || frontPanel.clientWidth || 0;
+    if (panelWidth <= 0) return 0;
+    const computed = getComputedStyle(frontPanel);
+    const paddingLeft = Number.parseFloat(computed.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(computed.paddingRight) || 0;
+    return Math.max(0, panelWidth - paddingLeft - paddingRight);
+  }
+  _maxFittableColumns() {
+    const configuredPPR = Number.parseInt(this._config?.ports_per_row, 10);
+    if (Number.isFinite(configuredPPR) && configuredPPR > 0) return Infinity;
+    const portSize = this._portSize();
+    const panelContentWidth = this._measuredFrontPanelContentWidth();
+    const hostWidth = this._measuredCardWidth();
+    if (!panelContentWidth && !hostWidth) return Infinity;
+    const horizontalPadding = 24;
+    const gap = 6;
+    const slotWidth = Math.max(1, portSize - 2);
+    const available = panelContentWidth > 0 ? panelContentWidth : Math.max(180, hostWidth - horizontalPadding);
+    return Math.max(1, Math.floor((available + gap) / (slotWidth + gap)));
+  }
+  _wholeNumberState(entityId) {
+    if (!entityId || !this._hass) return "\u2014";
+    const obj = stateObj(this._hass, entityId);
+    if (!obj) return "\u2014";
+    const raw = Number.parseFloat(String(obj.state ?? "").replace(",", "."));
+    if (!Number.isFinite(raw)) return formatState(this._hass, entityId);
+    const unit = obj.attributes?.unit_of_measurement;
+    const intValue = Math.round(raw);
+    return unit ? `${intValue} ${unit}` : String(intValue);
+  }
+  _apStatusRaw(entityId) {
+    if (!entityId || !this._hass) return "\u2014";
+    const obj = stateObj(this._hass, entityId);
+    if (!obj?.state) return "\u2014";
+    return String(obj.state);
+  }
+  _apStatusState(entityId) {
+    const raw = this._apStatusRaw(entityId);
+    return raw === "\u2014" ? raw : this._translateState(raw);
+  }
+  _apUptimeState(entityId) {
+    if (!entityId || !this._hass) return "\u2014";
+    return formatUptimeState(this._hass, entityId);
+  }
+  _apLedColorValue() {
+    const colorEntity = this._ctx?.led_color_entity;
+    const colorStateObj = colorEntity ? stateObj(this._hass, colorEntity) : null;
+    const raw = String(colorStateObj?.state || "").trim();
+    if (raw && raw !== "unknown" && raw !== "unavailable") {
+      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(raw)) return raw;
+      if (/^rgb\(/i.test(raw)) return raw;
+    }
+    const ledObj = this._ctx?.led_switch_entity ? stateObj(this._hass, this._ctx.led_switch_entity) : null;
+    const rgbAttr = ledObj?.attributes?.rgb_color || colorStateObj?.attributes?.rgb_color;
+    if (Array.isArray(rgbAttr) && rgbAttr.length === 3) {
+      const [r, g, b] = rgbAttr.map((n) => Math.max(0, Math.min(255, Number(n) || 0)));
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+    const named = raw.toLowerCase();
+    const map = {
+      blue: "#0000ff",
+      white: "#ffffff",
+      red: "#ff3b30",
+      green: "#33d35d",
+      orange: "#efb21a",
+      amber: "#efb21a",
+      yellow: "#efb21a",
+      warm_white: "#f5deb3",
+      cool_white: "#dbeafe",
+      purple: "#8b5cf6",
+      pink: "#ec4899"
+    };
+    return map[named] || null;
+  }
+  _apLedState() {
+    const ledEntity = this._ctx?.led_switch_entity;
+    const ledEnabled = ledEntity ? isOn(this._hass, ledEntity) : this._isDeviceOnline();
+    const defaultColor = this._config?.ap_led_color || this._ctx?.layout?.apLedDefaultColor || "#0000ff";
+    const ringColor = ledEnabled ? this._apLedColorValue() || defaultColor : "#868b93";
+    return { ledEntity, ledEnabled, ringColor };
+  }
+  _apUplinkText(uplink) {
+    if (!uplink) return null;
+    const deviceLabel = String(uplink.via_device_name || uplink.via_mac || "").trim();
+    return deviceLabel || null;
+  }
+  _escapeAttr(value) {
+    return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/'/g, "&#39;");
+  }
+  _escapeHtml(value) {
+    return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  _safeClassToken(value, fallback = "") {
+    const token = String(value ?? "").trim();
+    if (!token) return fallback;
+    return /^[a-z0-9_-]+$/i.test(token) ? token : fallback;
+  }
+  _formatEntityName(entityId, fallback = "") {
+    const fallbackName = String(fallback ?? "").trim();
+    const obj = entityId ? this._hass?.states?.[entityId] : null;
+    const formatter = this._hass?.formatEntityName;
+    if (obj && typeof formatter === "function") {
+      try {
+        const formatted = String(formatter(obj) ?? "").trim();
+        if (formatted) return formatted;
+      } catch (err) {
+      }
+    }
+    return fallbackName;
+  }
+  _fiveGPercent(entityId) {
+    const raw = this._numericState(entityId);
+    if (raw == null) return null;
+    return Math.max(0, Math.min(100, raw));
+  }
+  _fiveGBackupDisplayData(uptime) {
+    const cpuPercent = this._fiveGPercent(this._ctx?.cpu_utilization_entity);
+    const memoryPercent = this._fiveGPercent(this._ctx?.memory_utilization_entity);
+    return {
+      uptime: String(uptime || "\u2014"),
+      cpuPercent,
+      memoryPercent,
+      cpuBar: cpuPercent ?? 0,
+      memoryBar: memoryPercent ?? 0
+    };
+  }
+  _apUplinkTooltip(uplink) {
+    if (!uplink) return "";
+    const lines = [];
+    const kind = String(uplink.kind || "").toLowerCase();
+    if (kind === "mesh") lines.push("Mesh Uplink");
+    else if (kind === "wired") lines.push("Wired Uplink");
+    else lines.push("Uplink");
+    if (uplink.via_device_name) lines.push(`Device: ${uplink.via_device_name}`);
+    if (uplink.remote_port) lines.push(`Port: ${uplink.remote_port}`);
+    if (uplink.via_mac) lines.push(`MAC: ${uplink.via_mac}`);
+    return lines.join(" \xB7 ");
+  }
+  _toClientNames(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    for (const entry of value) {
+      if (typeof entry === "string" && entry.trim()) {
+        out.push(entry.trim());
+        continue;
+      }
+      if (entry && typeof entry === "object") {
+        const name = entry.name || entry.hostname || entry.client_name || entry.display_name || entry.mac || "";
+        if (String(name).trim()) out.push(String(name).trim());
+      }
+    }
+    return out;
+  }
+  _getPortClientInfo(slot) {
+    const candidates = new Set([
+      slot?.link_entity,
+      slot?.speed_entity,
+      slot?.port_switch_entity,
+      slot?.poe_power_entity,
+      slot?.rx_entity,
+      slot?.tx_entity,
+      ...Array.isArray(slot?.raw_entities) ? slot.raw_entities : []
+    ].filter(Boolean));
+    const numericKeys = [
+      "connected_clients",
+      "client_count",
+      "clients",
+      "num_clients",
+      "active_clients",
+      "station_count"
+    ];
+    const listKeys = ["clients", "connected_clients", "client_list", "stations", "hosts"];
+    let bestCount = null;
+    let bestNames = [];
+    for (const entityId of candidates) {
+      const obj = stateObj(this._hass, entityId);
+      const attrs = obj?.attributes;
+      if (!attrs || typeof attrs !== "object") continue;
+      const stateNum = Number.parseInt(String(obj?.state ?? ""), 10);
+      if (Number.isInteger(stateNum) && stateNum >= 0 && (entityId.includes("clients") || String(attrs?.friendly_name || "").toLowerCase().includes("clients"))) {
+        if (bestCount == null || stateNum > bestCount) bestCount = stateNum;
+      }
+      for (const key of numericKeys) {
+        const raw = attrs[key];
+        const num = Number.parseInt(raw, 10);
+        if (Number.isInteger(num) && num >= 0 && (bestCount == null || num > bestCount)) {
+          bestCount = num;
+        }
+      }
+      for (const key of listKeys) {
+        const names = this._toClientNames(attrs[key]);
+        if (names.length > bestNames.length) bestNames = names;
+      }
+    }
+    if ((bestCount == null || bestCount === 0) && bestNames.length === 0) return null;
+    const count = bestCount != null ? bestCount : bestNames.length;
+    return { count, names: bestNames.slice(0, 8) };
+  }
+  _getMergedPortClientInfo(slot, portClientIndex = null) {
+    const direct = this._getPortClientInfo(slot);
+    const indexed = Number.isInteger(slot?.port) ? portClientIndex?.get(slot.port) : null;
+    const indexedNames = indexed?.names ? Array.from(indexed.names) : [];
+    const names = Array.from(/* @__PURE__ */ new Set([...direct?.names || [], ...indexedNames])).slice(0, 8);
+    const count = Math.max(direct?.count || 0, indexed?.count || 0, indexedNames.length, names.length);
+    return count > 0 || names.length > 0 ? { count, names } : null;
+  }
+  _portStateCandidates(slot) {
+    return Array.from(new Set([
+      slot?.link_entity,
+      slot?.speed_entity,
+      slot?.poe_switch_entity,
+      slot?.poe_power_entity,
+      slot?.port_switch_entity,
+      slot?.power_cycle_entity,
+      slot?.rx_entity,
+      slot?.tx_entity,
+      ...Array.isArray(slot?.raw_entities) ? slot.raw_entities : []
+    ].filter(Boolean)));
+  }
+  _normalizeVlanCandidate(value, allowName = false) {
+    if (value && typeof value === "object") {
+      const nested = value.vlan_id ?? value.vlan ?? value.vid ?? value.id ?? value.name ?? value.label;
+      return this._normalizeVlanCandidate(nested, allowName);
+    }
+    const raw = String(value ?? "").trim();
+    if (!raw || /^(?:unknown|unavailable|none|null|off)$/i.test(raw)) return null;
+    const numericMatch = raw.match(/(?:^|\bvlan\s*[:#-]?\s*)(\d{1,4})(?:\b|$)/i) || (/^\d{1,4}$/.test(raw) ? [raw, raw] : null);
+    if (numericMatch) {
+      const id = Number.parseInt(numericMatch[1], 10);
+      if (Number.isInteger(id) && id >= 1 && id <= 4094) {
+        return { value: String(id), compact: `V${id}` };
+      }
+    }
+    if (!allowName) return null;
+    const name = raw.replace(/^vlan\s*[:#-]?\s*/i, "").trim();
+    if (!name || name.length > 48) return null;
+    return {
+      value: name,
+      compact: name.length <= 5 ? name : `${name.slice(0, 4)}\u2026`
+    };
+  }
+  _getPortVlan(slot) {
+    const vlanAttributeKeys = [
+      "vlan",
+      "vlan_id",
+      "native_vlan",
+      "native_vlan_id",
+      "port_vlan",
+      "port_vlan_id",
+      "pvid",
+      "vid"
+    ];
+    for (const entityId of this._portStateCandidates(slot)) {
+      const obj = stateObj(this._hass, entityId);
+      const attrs = obj?.attributes || {};
+      for (const key of vlanAttributeKeys) {
+        if (!Object.prototype.hasOwnProperty.call(attrs, key)) continue;
+        const vlan2 = this._normalizeVlanCandidate(attrs[key], true);
+        if (vlan2) return vlan2;
+      }
+      const descriptor = [
+        entityId,
+        attrs.friendly_name,
+        attrs.translation_key,
+        attrs.original_name
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (!/(?:vlan|pvid|native[_\s-]*(?:network|vlan)|port[_\s-]*profile)/i.test(descriptor)) continue;
+      const vlan = this._normalizeVlanCandidate(obj?.state, true);
+      if (vlan) return vlan;
+    }
+    return null;
+  }
+  _compactPortSpeed(slot) {
+    const speedMbit = parseLinkSpeedMbit(this._hass, slot?.speed_entity);
+    if (!Number.isFinite(speedMbit) || speedMbit <= 0) return "";
+    if (speedMbit >= 1e3) {
+      const gigabit = speedMbit / 1e3;
+      return `${Number(gigabit.toFixed(gigabit >= 10 ? 0 : 1))}G`;
+    }
+    return `${Number(speedMbit.toFixed(speedMbit >= 100 ? 0 : 1))}M`;
+  }
+  _extractClientNameFromStateObj(obj, entityId) {
+    const attrs = obj?.attributes || {};
+    const fallback = String(attrs.friendly_name || "").trim() || String(entityId || "").replace(/^device_tracker\./i, "").replace(/_/g, " ").trim();
+    return this._formatEntityName(entityId, fallback);
+  }
+  _extractPortFromAttributes(attrs, entityId = "") {
+    const keys = [
+      "port",
+      "switch_port",
+      "sw_port",
+      "uplink_port",
+      "uplink_remote_port",
+      "remote_port",
+      "network_port",
+      "port_number",
+      "wired_port"
+    ];
+    for (const key of keys) {
+      const match = String(attrs?.[key] ?? "").match(/\d+/);
+      if (match) return Number.parseInt(match[0], 10);
+    }
+    const textKeys = ["connected_to", "uplink", "uplink_source", "source", "network_path", "connection_path"];
+    for (const key of textKeys) {
+      const match = String(attrs?.[key] ?? "").match(/port\D*(\d+)/i);
+      if (match) return Number.parseInt(match[1], 10);
+    }
+    const idMatch = String(entityId || "").match(/(?:^|[_-])port[_-]?(\d+)(?:[_-]|$)/i);
+    if (idMatch) return Number.parseInt(idMatch[1], 10);
+    return null;
+  }
+  _extractParentMacFromAttributes(attrs) {
+    const keys = [
+      "sw_mac",
+      "switch_mac",
+      "uplink_mac",
+      "uplink_device_mac",
+      "wired_uplink_mac",
+      "switch_uplink_mac",
+      "connected_to_mac",
+      "parent_mac",
+      "parent_device_mac",
+      "network_device_mac"
+    ];
+    for (const key of keys) {
+      const mac = normalizeMac(attrs?.[key]);
+      if (mac) return mac;
+    }
+    return null;
+  }
+  _extractParentText(attrs) {
+    const textKeys = [
+      "connected_to",
+      "uplink",
+      "uplink_source",
+      "source",
+      "network_device",
+      "network_path",
+      "connection_path",
+      "switch",
+      "parent"
+    ];
+    return textKeys.map((key) => String(attrs?.[key] ?? "").trim()).filter(Boolean).join(" ").toLowerCase();
+  }
+  _matchesParentDevice(attrs, deviceMac) {
+    const parentMac = this._extractParentMacFromAttributes(attrs);
+    if (parentMac) return parentMac === deviceMac;
+    const parentText = this._extractParentText(attrs);
+    if (!parentText) return false;
+    const deviceName = String(this._ctx?.name || "").toLowerCase().trim();
+    const deviceModel = String(this._ctx?.model || "").toLowerCase().trim();
+    if (deviceName && parentText.includes(deviceName)) return true;
+    if (deviceModel && parentText.includes(deviceModel)) return true;
+    return false;
+  }
+  _extractAccessPointMacFromAttributes(attrs) {
+    const keys = [
+      "ap_mac",
+      "access_point_mac",
+      "connected_ap_mac",
+      "uplink_ap_mac",
+      "radio_ap_mac",
+      "ap_bssid",
+      "bssid"
+    ];
+    for (const key of keys) {
+      const mac = normalizeMac(attrs?.[key]);
+      if (mac) return mac;
+    }
+    return null;
+  }
+  _matchesAccessPoint(attrs) {
+    const deviceId = String(this._ctx?.device?.id || this._ctx?.identity?.device_id || "").trim();
+    const deviceIdKeys = ["ap_device_id", "access_point_device_id", "parent_device_id"];
+    if (deviceId && deviceIdKeys.some((key) => String(attrs?.[key] || "").trim() === deviceId)) {
+      return true;
+    }
+    const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
+    const parentMac = this._extractAccessPointMacFromAttributes(attrs);
+    if (parentMac) return !!deviceMac && parentMac === deviceMac;
+    const deviceName = String(this._ctx?.name || "").trim().toLowerCase();
+    if (deviceName.length < 3) return false;
+    const textKeys = [
+      "ap_name",
+      "access_point",
+      "connected_ap",
+      "connected_to",
+      "network_device",
+      "radio_ap",
+      "ap"
+    ];
+    return textKeys.some((key) => {
+      const candidate = String(attrs?.[key] || "").trim().toLowerCase();
+      return candidate === deviceName || candidate.startsWith(`${deviceName} \xB7`) || candidate.startsWith(`${deviceName} (`);
+    });
+  }
+  _isConnectedWirelessClient(obj) {
+    const attrs = obj?.attributes || {};
+    const state = String(obj?.state || "").trim().toLowerCase();
+    if (["not_home", "away", "unavailable", "unknown", "disconnected", "offline"].includes(state)) {
+      return false;
+    }
+    const falseValues = /* @__PURE__ */ new Set([false, 0, "0", "false", "no", "off", "disconnected"]);
+    for (const key of ["connected", "is_connected", "online"]) {
+      if (falseValues.has(attrs[key])) return false;
+    }
+    const trueValues = /* @__PURE__ */ new Set([true, 1, "1", "true", "yes", "on"]);
+    if (["is_wired", "wired"].some((key) => trueValues.has(attrs[key]))) return false;
+    const connectionText = [
+      attrs.connection_type,
+      attrs.connection,
+      attrs.media,
+      attrs.medium,
+      attrs.interface_type
+    ].filter(Boolean).join(" ").toLowerCase();
+    if (/(?:wired|ethernet|\blan\b)/i.test(connectionText)) return false;
+    return true;
+  }
+  _wirelessClientMac(attrs) {
+    for (const key of ["mac", "client_mac", "device_mac", "station_mac"]) {
+      const mac = normalizeMac(attrs?.[key]);
+      if (mac) return mac;
+    }
+    return null;
+  }
+  _wifiBandFromAttributes(attrs) {
+    const bandKeys = [
+      "band",
+      "radio_band",
+      "frequency_band",
+      "wifi_band",
+      "wlan_band",
+      "radio",
+      "radio_name"
+    ];
+    for (const key of bandKeys) {
+      const text = String(attrs?.[key] ?? "").trim().toLowerCase().replace(",", ".");
+      if (!text) continue;
+      if (/(?:^|\b)(?:6\s*ghz|6g|6e)(?:\b|$)/i.test(text)) return "6";
+      if (/(?:^|\b)(?:5\s*ghz|5g|na|ac)(?:\b|$)/i.test(text)) return "5";
+      if (/(?:2\.4\s*ghz|2\.4g|2g|\bng\b)/i.test(text)) return "2.4";
+      if (key.includes("band")) {
+        if (text === "6") return "6";
+        if (text === "5") return "5";
+        if (text === "2.4" || text === "24") return "2.4";
+      }
+    }
+    for (const key of ["frequency", "channel_frequency", "center_frequency", "freq"]) {
+      const raw = String(attrs?.[key] ?? "").trim().toLowerCase().replace(",", ".");
+      if (!raw) continue;
+      let frequency = Number.parseFloat(raw);
+      if (!Number.isFinite(frequency)) continue;
+      if (frequency > 1e8) frequency /= 1e6;
+      if (frequency >= 2.3 && frequency <= 2.5) return "2.4";
+      if (frequency >= 4.9 && frequency < 5.925) return "5";
+      if (frequency >= 5.925 && frequency <= 7.2) return "6";
+      if (frequency >= 2300 && frequency <= 2500) return "2.4";
+      if (frequency >= 4900 && frequency < 5925) return "5";
+      if (frequency >= 5925 && frequency <= 7200) return "6";
+    }
+    return "unknown";
+  }
+  _buildWirelessClientData() {
+    const byClient = /* @__PURE__ */ new Map();
+    for (const [entityId, obj] of Object.entries(this._hass?.states || {})) {
+      if (!entityId.startsWith("device_tracker.")) continue;
+      const attrs = obj?.attributes || {};
+      if (!this._matchesAccessPoint(attrs) || !this._isConnectedWirelessClient(obj)) continue;
+      const clientKey = this._wirelessClientMac(attrs) || entityId;
+      const client = {
+        name: this._extractClientNameFromStateObj(obj, entityId),
+        band: this._wifiBandFromAttributes(attrs)
+      };
+      const existing = byClient.get(clientKey);
+      if (!existing || existing.band === "unknown" && client.band !== "unknown") {
+        byClient.set(clientKey, client);
+      }
+    }
+    const groups = { "2.4": [], "5": [], "6": [], unknown: [] };
+    for (const client of byClient.values()) groups[client.band]?.push(client.name);
+    for (const names of Object.values(groups)) names.sort((a, b) => a.localeCompare(b));
+    const rawSensorTotal = this._numericState(this._ctx?.clients_entity);
+    const sensorTotal = Number.isFinite(rawSensorTotal) && rawSensorTotal >= 0 ? Math.round(rawSensorTotal) : null;
+    const total = Math.max(sensorTotal ?? 0, byClient.size);
+    return {
+      total,
+      hasTotal: sensorTotal != null || byClient.size > 0,
+      matchedCount: byClient.size,
+      missingBandData: Math.max(0, total - byClient.size),
+      groups
+    };
+  }
+  _renderWirelessClientBands(data) {
+    if (!data || data.matchedCount < 1) return "";
+    const definitions = [
+      ["2.4", "band_24"],
+      ["5", "band_5"],
+      ["6", "band_6"]
+    ];
+    const unknownCount = data.groups.unknown.length + data.missingBandData;
+    if (unknownCount > 0) definitions.push(["unknown", "band_unknown"]);
+    return `
+      <section class="wireless-clients" aria-label="${this._escapeAttr(this._t("wlan_clients_by_band"))}">
+        <div class="wireless-clients-title">${this._escapeHtml(this._t("wlan_clients_by_band"))}</div>
+        <div class="wireless-band-grid">
+          ${definitions.map(([band, labelKey]) => {
+      const names = data.groups[band] || [];
+      const count = band === "unknown" ? unknownCount : names.length;
+      const missingLabel = band === "unknown" && data.missingBandData > 0 ? this._t("without_band_data").replace("{count}", String(data.missingBandData)) : "";
+      return `
+              <div class="wireless-band ${band === "unknown" ? "unknown" : ""}">
+                <div class="wireless-band-heading">
+                  <span>${this._escapeHtml(this._t(labelKey))}</span>
+                  <strong>${this._escapeHtml(count)}</strong>
+                </div>
+                <div class="wireless-client-list">
+                  ${names.length ? names.slice(0, 8).map((name) => `<span>${this._escapeHtml(name)}</span>`).join("") : `<span class="empty">\u2014</span>`}
+                  ${names.length > 8 ? `<span>+${this._escapeHtml(names.length - 8)}</span>` : ""}
+                  ${missingLabel ? `<span class="missing">${this._escapeHtml(missingLabel)}</span>` : ""}
+                </div>
+              </div>`;
+    }).join("")}
+        </div>
+      </section>`;
+  }
+  _buildPortClientIndex() {
+    const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
+    if (!deviceMac || !this._hass?.states) return /* @__PURE__ */ new Map();
+    const byPort = /* @__PURE__ */ new Map();
+    for (const [entityId, obj] of Object.entries(this._hass.states)) {
+      const attrs = obj?.attributes || {};
+      if (!this._matchesParentDevice(attrs, deviceMac)) continue;
+      const port = this._extractPortFromAttributes(attrs, entityId);
+      if (!Number.isInteger(port) || port < 1) continue;
+      if (!byPort.has(port)) {
+        byPort.set(port, { count: 0, names: /* @__PURE__ */ new Set() });
+      }
+      const entry = byPort.get(port);
+      if (entityId.startsWith("device_tracker.")) {
+        const name = this._extractClientNameFromStateObj(obj, entityId);
+        if (name) entry.names.add(name);
+      }
+      const stateNum = Number.parseInt(String(obj?.state ?? ""), 10);
+      const friendly = String(attrs?.friendly_name || "").toLowerCase();
+      const looksLikeClientCounter = entityId.includes("clients") || friendly.includes("clients") || friendly.includes("ger\xE4te");
+      if (looksLikeClientCounter && Number.isInteger(stateNum) && stateNum >= 0) {
+        entry.count = Math.max(entry.count, stateNum);
+      }
+      const attrNames = this._toClientNames(attrs?.clients || attrs?.connected_clients || attrs?.client_list);
+      for (const name of attrNames) {
+        entry.names.add(name);
+      }
+      entry.count = Math.max(entry.count, entry.names.size);
+    }
+    return byPort;
+  }
+  _buildSlotData(ctx) {
+    const discovered = Array.isArray(ctx?.numberedPorts) ? ctx.numberedPorts : [];
+    const numberedRaw = mergePortsWithLayout(ctx?.layout, discovered);
+    const specialsRaw = mergeSpecialsWithLayout(
+      ctx?.layout,
+      ctx?.type === "gateway" ? discoverSpecialPorts(ctx?.entities || []) : [],
+      discovered
+    );
+    this._applyManualPortSensorOverrides(numberedRaw, specialsRaw);
+    if (ctx?.type === "gateway") {
+      return applyPortNames(applyGatewayPortOverrides(
+        this._config,
+        specialsRaw,
+        numberedRaw,
+        ctx?.layout
+      ), this._config?.port_name);
+    }
+    return applyPortNames({ specials: specialsRaw, numbered: numberedRaw }, this._config?.port_name);
+  }
+  _relevantStateEntityIds() {
+    const ids = /* @__PURE__ */ new Set();
+    for (const entity of this._ctx?.entities || []) {
+      if (entity?.entity_id) ids.add(entity.entity_id);
+    }
+    const directEntityKeys = [
+      "cpu_utilization_entity",
+      "cpu_temperature_entity",
+      "memory_utilization_entity",
+      "temperature_entity",
+      "online_entity",
+      "uptime_entity",
+      "clients_entity",
+      "mesh_signal_entity",
+      "status_entity",
+      "ap_status_entity",
+      "led_switch_entity",
+      "led_color_entity",
+      "reboot_entity"
+    ];
+    for (const key of directEntityKeys) {
+      const entityId = this._ctx?.[key];
+      if (entityId) ids.add(entityId);
+    }
+    if (this._config?.mesh_signal_entity) ids.add(this._config.mesh_signal_entity);
+    const { specials, numbered } = this._buildSlotData(this._ctx);
+    const portEntityKeys = [
+      "link_entity",
+      "speed_entity",
+      "poe_switch_entity",
+      "poe_power_entity",
+      "port_switch_entity",
+      "power_cycle_entity",
+      "rx_entity",
+      "tx_entity"
+    ];
+    for (const slot of [...specials, ...numbered]) {
+      for (const key of portEntityKeys) {
+        if (slot?.[key]) ids.add(slot[key]);
+      }
+      for (const entityId of slot?.raw_entities || []) ids.add(entityId);
+    }
+    return ids;
+  }
+  _hasRelevantStateChanges(previousHass, nextHass) {
+    const entityIds = this._relevantStateEntityIds();
+    if (!entityIds.size) return true;
+    for (const id of entityIds) {
+      if (previousHass?.states?.[id] !== nextHass?.states?.[id]) return true;
+    }
+    const hasWirelessClients = this._ctx?.type === "access_point" || this._ctx?.layout?.supportsIntegratedWifi;
+    if (hasWirelessClients) {
+      const trackerIds = /* @__PURE__ */ new Set([
+        ...Object.keys(previousHass?.states || {}).filter((id) => id.startsWith("device_tracker.")),
+        ...Object.keys(nextHass?.states || {}).filter((id) => id.startsWith("device_tracker."))
+      ]);
+      for (const entityId of trackerIds) {
+        const before = previousHass?.states?.[entityId];
+        const after = nextHass?.states?.[entityId];
+        if (before === after) continue;
+        if (this._matchesAccessPoint(before?.attributes || {}) || this._matchesAccessPoint(after?.attributes || {})) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  _manualPortSpeedOverrides() {
+    const out = /* @__PURE__ */ new Map();
+    const entries = Object.entries(this._config || {});
+    for (const [key, value] of entries) {
+      const match = String(key || "").match(/^port_(\d+)$/i);
+      if (!match) continue;
+      const port = Number.parseInt(match[1], 10);
+      const entityId = String(value || "").trim();
+      if (!Number.isInteger(port) || port < 1 || !entityId) continue;
+      out.set(port, entityId);
+    }
+    return out;
+  }
+  _applyManualPortSensorOverrides(numbered, specials) {
+    const overrides = this._manualPortSpeedOverrides();
+    if (!overrides.size) return;
+    const allSlots = [...Array.isArray(numbered) ? numbered : [], ...Array.isArray(specials) ? specials : []];
+    const overrideEntities = new Set(overrides.values());
+    for (const slot of allSlots) {
+      if (!slot || !overrideEntities.has(slot.speed_entity)) continue;
+      slot.speed_entity = null;
+    }
+    for (const [port, entityId] of overrides.entries()) {
+      const slot = allSlots.find((entry) => entry?.port === port);
+      if (!slot) continue;
+      slot.speed_entity = entityId;
+      if (!Array.isArray(slot.raw_entities)) slot.raw_entities = [];
+      if (!slot.raw_entities.includes(entityId)) slot.raw_entities.push(entityId);
+      const derivedRx = this._deriveTelemetrySibling(entityId, "rx");
+      if (derivedRx) {
+        slot.rx_entity = derivedRx;
+        if (!slot.raw_entities.includes(derivedRx)) slot.raw_entities.push(derivedRx);
+      }
+      const derivedTx = this._deriveTelemetrySibling(entityId, "tx");
+      if (derivedTx) {
+        slot.tx_entity = derivedTx;
+        if (!slot.raw_entities.includes(derivedTx)) slot.raw_entities.push(derivedTx);
+      }
+      const derivedPoePower = this._deriveTelemetrySibling(entityId, "poe_power");
+      if (derivedPoePower) {
+        slot.poe_power_entity = derivedPoePower;
+        if (!slot.raw_entities.includes(derivedPoePower)) slot.raw_entities.push(derivedPoePower);
+      }
+      const derivedPoeSwitch = this._deriveTelemetrySibling(entityId, "poe_switch");
+      if (derivedPoeSwitch) {
+        slot.poe_switch_entity = derivedPoeSwitch;
+        if (!slot.raw_entities.includes(derivedPoeSwitch)) slot.raw_entities.push(derivedPoeSwitch);
+      }
+    }
+  }
+  _deriveTelemetrySibling(speedEntityId, metric) {
+    const source = String(speedEntityId || "").trim();
+    if (!source.startsWith("sensor.") || !source.endsWith("_link_speed")) return null;
+    const base = source.replace(/^sensor\./i, "").replace(/_link_speed$/i, "");
+    if (!base) return null;
+    const candidates = metric === "rx" ? [`sensor.${base}_rx`] : metric === "tx" ? [`sensor.${base}_tx`] : metric === "poe_power" ? [
+      `sensor.${base}_poe_power`,
+      `sensor.${base}_poe_consumption`,
+      `sensor.${base}_power_draw`
+    ] : metric === "poe_switch" ? [
+      `switch.${base}_poe`,
+      `switch.${base}_poe_enabled`,
+      `switch.${base}_poe_port_control`,
+      `switch.${base}_port_poe`
+    ] : [];
+    if (!candidates.length) return null;
+    return candidates.find((candidate) => !!this._hass?.states?.[candidate]) || null;
+  }
+  _normalizePortList(value) {
+    if (!Array.isArray(value)) return [];
+    const numeric = value.map((entry) => Number.parseInt(entry, 10)).filter((num) => Number.isInteger(num) && num > 0);
+    return Array.from(new Set(numeric)).sort((a, b) => a - b);
+  }
+  _applySpecialPortSelection(specials, numbered) {
+    const specialPortDefaults = specials.map((slot) => slot?.port).filter((port) => Number.isInteger(port));
+    const hasEditMode = this._config?.edit_special_ports === true;
+    const hasExplicitSpecialPorts2 = hasEditMode && Object.prototype.hasOwnProperty.call(this._config || {}, "special_ports");
+    const selectedPorts = hasEditMode ? hasExplicitSpecialPorts2 ? this._normalizePortList(this._config?.special_ports) : this._normalizePortList(specialPortDefaults) : this._normalizePortList([
+      ...specialPortDefaults,
+      ...this._normalizePortList(this._config?.custom_special_ports)
+    ]);
+    const allByPort = /* @__PURE__ */ new Map();
+    for (const slot of [...specials, ...numbered]) {
+      if (!Number.isInteger(slot?.port) || allByPort.has(slot.port)) continue;
+      allByPort.set(slot.port, slot);
+    }
+    const selectedSet = new Set(selectedPorts);
+    const nextSpecials = selectedPorts.map((port) => allByPort.get(port)).filter(Boolean).map((slot) => ({ ...slot, kind: "special", label: slot.label || String(slot.port) }));
+    const numberedByPort = new Map(
+      numbered.filter((slot) => Number.isInteger(slot?.port)).map((slot) => [slot.port, slot])
+    );
+    const nextNumbered = numbered.filter((slot) => !selectedSet.has(slot.port)).map((slot) => ({ ...slot, kind: "numbered", label: slot.label || String(slot.port) }));
+    for (const slot of specials) {
+      if (!Number.isInteger(slot?.port) || selectedSet.has(slot.port)) continue;
+      if (numberedByPort.has(slot.port)) continue;
+      nextNumbered.push({
+        ...slot,
+        key: `port-${slot.port}`,
+        kind: "numbered",
+        label: String(slot.port)
+      });
+    }
+    nextNumbered.sort((a, b) => (a.port || 0) - (b.port || 0));
+    return { specials: nextSpecials, numbered: nextNumbered };
+  }
+  _buildEffectiveRows(ctx, numbered) {
+    const baseRows = (ctx?.layout?.rows || []).map((row) => [...row]);
+    const knownPorts = new Set(baseRows.flat());
+    const orderedPorts = numbered.map((slot) => slot?.port).filter((port) => Number.isInteger(port)).sort((a, b) => a - b);
+    const extraPorts = numbered.map((slot) => slot?.port).filter((port) => Number.isInteger(port) && !knownPorts.has(port)).sort((a, b) => a - b);
+    const fitCols = this._maxFittableColumns();
+    this._renderedFittableColumns = fitCols;
+    if (!extraPorts.length && !baseRows.length && !orderedPorts.length) return [];
+    if (!baseRows.length) {
+      if (!Number.isFinite(fitCols) || extraPorts.length <= fitCols) return [extraPorts];
+      const packed = [];
+      for (let i = 0; i < extraPorts.length; i += fitCols) {
+        packed.push(extraPorts.slice(i, i + fitCols));
+      }
+      return packed;
+    }
+    const rows = baseRows.map((row) => [...row]);
+    if (extraPorts.length) rows[rows.length - 1].push(...extraPorts);
+    const widestRow = rows.reduce((max, row) => Math.max(max, row.length), 0);
+    if (!Number.isFinite(fitCols) || widestRow <= fitCols) return rows;
+    const packedRows = [];
+    for (let i = 0; i < orderedPorts.length; i += fitCols) {
+      packedRows.push(orderedPorts.slice(i, i + fitCols));
+    }
+    return packedRows;
+  }
+  _shouldUseOddEvenRows(ctx, numbered) {
+    if (!ctx || ctx.type !== "switch" && ctx.type !== "gateway") return false;
+    if (this._config?.force_sequential_ports === true) return false;
+    if (ctx?.layout?.rj45_odd_even === true) return true;
+    if (ctx?.layout?.rj45_odd_even === false) return false;
+    const frontStyle = String(ctx?.layout?.frontStyle || "");
+    if (["dual-row", "six-grid", "eight-grid", "quad-row"].includes(frontStyle)) {
+      return false;
+    }
+    const portCount = (numbered || []).filter((slot) => Number.isInteger(slot?.port)).length;
+    return portCount > 8;
+  }
+  _applyOddEvenRows(rows) {
+    const out = [];
+    for (let i = 0; i < rows.length; i += 2) {
+      const first = rows[i] || [];
+      const second = rows[i + 1] || [];
+      const pair = [...first, ...second];
+      if (pair.length <= 1) {
+        if (first.length) out.push(first);
+        if (second.length) out.push(second);
+        continue;
+      }
+      const odds = pair.filter((port) => Number.isInteger(port) && port % 2 === 1);
+      const evens = pair.filter((port) => Number.isInteger(port) && port % 2 === 0);
+      if (odds.length && evens.length) {
+        out.push(odds, evens);
+      } else {
+        if (first.length) out.push(first);
+        if (second.length) out.push(second);
+      }
+    }
+    return out;
+  }
+  _rotate180Enabled(ctx) {
+    const type = ctx?.type;
+    const rawRotate = this._config?.rotate180;
+    const rotate180 = rawRotate === true || rawRotate === "true" || rawRotate === 1 || rawRotate === "1";
+    return (type === "switch" || type === "gateway") && rotate180;
+  }
+  async _ensureLoaded() {
+    if (!this._hass || !this._config?.device_id) return;
+    const currentId = this._config.device_id;
+    const refreshing = this._loadedDeviceId === currentId && !!this._ctx;
+    if (refreshing && Date.now() - this._contextLoadedAt < CONTEXT_REFRESH_INTERVAL) return;
+    if (this._loading) return;
+    this._loading = true;
+    this._log("debug", refreshing ? "refreshing device context" : "loading device context");
+    if (!refreshing) this._render();
+    const token = ++this._loadToken;
+    try {
+      const ctx = await getDeviceContext(this._hass, currentId, this._config);
+      if (token !== this._loadToken) return;
+      this._ctx = ctx;
+      this._loadedDeviceId = currentId;
+      this._contextLoadedAt = Date.now();
+      const portSnapshot = this._buildPortDebugSnapshot(ctx);
+      this._log("info", "context loaded", {
+        type: ctx?.type || null,
+        model: ctx?.model || null,
+        identity_mac: ctx?.identity?.primary_mac || null,
+        ...portSnapshot.summary || {},
+        top_traffic: portSnapshot.top_traffic || []
+      });
+      if (this._shouldLog("debug") && portSnapshot.ports?.length) {
+        this._log("debug", "port snapshot", portSnapshot.ports);
+      }
+      const { specials, numbered } = this._buildSlotData(ctx);
+      const available = [...specials, ...numbered];
+      const selectedStillExists = available.some((slot) => slot.key === this._selectedKey);
+      if (!selectedStillExists) {
+        this._selectedKey = this._config?.dynamic_port_details === true ? null : available[0]?.key || null;
+      }
+    } catch (err) {
+      this._log("error", "Failed to load device context", err);
+      if (token !== this._loadToken) return;
+      if (!refreshing) {
+        this._ctx = null;
+        this._loadedDeviceId = null;
+        this._contextLoadedAt = 0;
+      } else {
+        this._contextLoadedAt = Date.now();
+      }
+    }
+    this._loading = false;
+    this._render();
+  }
+  _selectKey(key) {
+    const restoreFocus = this.shadowRoot?.activeElement?.matches?.(".port") === true;
+    this._selectedKey = this._config?.dynamic_port_details === true && this._selectedKey === key ? null : key;
+    this._render();
+    if (restoreFocus) {
+      requestAnimationFrame(() => {
+        const escapedKey = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(key) : key;
+        this.shadowRoot?.querySelector(`.port[data-key="${escapedKey}"]`)?.focus();
+      });
+    }
+  }
+  async _toggleEntity(entityId) {
+    if (!entityId || !this._hass) return;
+    const [domain] = entityId.split(".");
+    this._log("debug", "toggle entity", entityId);
+    await this._hass.callService(domain, "toggle", { entity_id: entityId });
+  }
+  async _pressButton(entityId) {
+    if (!entityId || !this._hass) return;
+    this._log("debug", "press button", entityId);
+    await this._hass.callService("button", "press", { entity_id: entityId });
+  }
+  _title() {
+    if (this._config?.show_name === false) return "";
+    if (this._config?.name) return this._config.name;
+    if (this._ctx?.name) return this._ctx.name;
+    return "UniFi Device Card";
+  }
+  _subtitle() {
+    if (!this._config?.device_id || !this._ctx) return `Version ${VERSION}`;
+    const fw = this._ctx?.firmware;
+    const model = this._ctx?.layout?.displayModel || this._ctx?.model || "";
+    return fw ? `${model} \xB7 FW ${fw}` : model;
+  }
+  _openDevicePage() {
+    const deviceId = this._config?.device_id;
+    if (!deviceId || this._ctx?.fake_device === true) return;
+    const path = `/config/devices/device/${encodeURIComponent(deviceId)}`;
+    window.history.pushState(null, "", path);
+    window.dispatchEvent(new Event("location-changed"));
+  }
+  _attachDeviceLinkHandler() {
+    const link = this.shadowRoot?.querySelector("[data-action='open-device']");
+    if (!link) return;
+    link.addEventListener("click", () => this._openDevicePage());
+    link.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      this._openDevicePage();
+    });
+  }
+  _headerMetrics() {
+    if (!this._telemetryEnabled() || !this._ctx || !this._hass) return [];
+    const metrics = [
+      { key: "cpu_utilization", entity: this._ctx.cpu_utilization_entity },
+      { key: "cpu_temperature", entity: this._ctx.cpu_temperature_entity },
+      { key: "memory_utilization", entity: this._ctx.memory_utilization_entity },
+      { key: "temperature", entity: this._ctx.temperature_entity },
+      ...this._ctx?.layout?.supportsIntegratedWifi ? [{ key: "wlan_clients", entity: this._ctx.clients_entity, wholeNumber: true }] : []
+    ];
+    const seenEntities = /* @__PURE__ */ new Set();
+    return metrics.filter((item) => {
+      if (!item.entity) return false;
+      if (seenEntities.has(item.entity)) return false;
+      seenEntities.add(item.entity);
+      return (item.wholeNumber ? this._wholeNumberState(item.entity) : formatState(this._hass, item.entity)) !== "\u2014";
+    }).map((item) => ({
+      label: this._t(item.key),
+      value: item.wholeNumber ? this._wholeNumberState(item.entity) : formatState(this._hass, item.entity)
+    }));
+  }
+  _meshSignalData() {
+    if (this._ctx?.ap_uplink?.kind !== "mesh") return null;
+    const entityId = String(
+      this._config?.mesh_signal_entity || this._ctx?.mesh_signal_entity || ""
+    ).trim();
+    if (!entityId || !this._hass?.states?.[entityId]) return null;
+    const state = this._hass.states[entityId];
+    const raw = String(state.state ?? "").trim();
+    if (!raw || raw === "unknown" || raw === "unavailable") return null;
+    const numeric = Number.parseFloat(raw.replace(",", "."));
+    if (!Number.isFinite(numeric)) return null;
+    const unit = String(state.attributes?.unit_of_measurement || "").trim();
+    const isPercentage = unit === "%";
+    if (isPercentage) {
+      const value = Math.min(100, Math.max(0, numeric));
+      const level2 = value >= 80 ? "excellent" : value >= 60 ? "good" : value >= 40 ? "fair" : "weak";
+      return {
+        entityId,
+        value,
+        min: 0,
+        max: 100,
+        display: `${Number(value.toFixed(1))} %`,
+        position: Math.min(99, Math.max(1, value)),
+        level: level2,
+        scale: [this._t("signal_weak"), "40 %", "60 %", "80 %", this._t("signal_excellent")]
+      };
+    }
+    const dbm = numeric > 0 && numeric <= 120 ? -numeric : numeric;
+    if (dbm < -150 || dbm > 0) return null;
+    const level = dbm >= -50 ? "excellent" : dbm >= -60 ? "good" : dbm >= -70 ? "fair" : "weak";
+    const position = (Math.min(-40, Math.max(-90, dbm)) + 90) / 50 * 100;
+    return {
+      entityId,
+      value: dbm,
+      min: -90,
+      max: -40,
+      display: `${Number(dbm.toFixed(1))} dBm`,
+      position: Math.min(99, Math.max(1, position)),
+      level,
+      scale: [this._t("signal_weak"), "-75", "-60", "-45", this._t("signal_excellent")]
+    };
+  }
+  _renderMeshSignal() {
+    const signal = this._meshSignalData();
+    if (!signal) return "";
+    return `
+      <div class="mesh-signal" title="${this._escapeAttr(signal.entityId)}">
+        <div class="mesh-signal-heading">
+          <div class="detail-label">${this._escapeHtml(this._t("mesh_signal"))}</div>
+          <div class="mesh-signal-value ${this._safeClassToken(signal.level, "weak")}">
+            ${this._escapeHtml(signal.display)} \xB7 ${this._escapeHtml(this._t(`signal_${signal.level}`))}
+          </div>
+        </div>
+        <div class="mesh-signal-track" role="meter" aria-label="${this._escapeAttr(this._t("mesh_signal"))}" aria-valuemin="${this._escapeAttr(signal.min)}" aria-valuemax="${this._escapeAttr(signal.max)}" aria-valuenow="${this._escapeAttr(signal.value)}" aria-valuetext="${this._escapeAttr(`${signal.display}, ${this._t(`signal_${signal.level}`)}`)}" style="--mesh-signal-position:${this._escapeAttr(`${signal.position}%`)}">
+          <span class="mesh-signal-marker"></span>
+        </div>
+        <div class="mesh-signal-scale" aria-hidden="true">
+          ${signal.scale.map((label) => `<span>${this._escapeHtml(label)}</span>`).join("")}
+        </div>
+      </div>`;
+  }
+  /**
+   * Wrapper around the module-level isPortConnected() that adds sticky-state
+   * tracking for SFP-like ports.  When a port has been observed with live
+   * traffic, short polling-interval gaps where rx/tx momentarily reads 0 will
+   * no longer flip the LED off.  The sticky state is cleared only when the
+   * link speed itself drops to 0 (cable genuinely removed).
+   */
+  _isPortConnected(port) {
+    const trustLowSpeedLink = this._config?.trust_link_speed_ports?.includes(port?.port) === true;
+    if (isSfpLikePort(port)) {
+      const key = port?.key || port?.physical_key;
+      if (key) {
+        if (hasTraffic(this._hass, port)) this._sfpConnectedSeen.add(key);
+        const result = isPortConnected(this._hass, port, { trustLowSpeedLink });
+        if (!result && this._sfpConnectedSeen.has(key)) {
+          const speedMbit = parseLinkSpeedMbit(this._hass, port?.speed_entity);
+          if (speedMbit != null && speedMbit > 0) return true;
+          this._sfpConnectedSeen.delete(key);
+        }
+        return result;
+      }
+    }
+    return isPortConnected(this._hass, port, { trustLowSpeedLink });
+  }
+  _connectedCount(allSlots) {
+    return allSlots.filter((s) => this._isPortConnected(s)).length;
+  }
+  _isDeviceOnline() {
+    const onlineEntity = this._ctx?.online_entity;
+    if (!onlineEntity) return false;
+    const raw = String(formatState(this._hass, onlineEntity) || "").toLowerCase().trim();
+    if (!raw || raw === "\u2014") return false;
+    const onlineTokens = ["online", "connected", "verbunden", "available", "bereit", "up", "on", "true", "1"];
+    const offlineTokens = ["offline", "disconnected", "getrennt", "not connected", "unavailable", "down", "off", "false", "0"];
+    if (offlineTokens.some((token) => raw === token || raw.includes(token))) return false;
+    return onlineTokens.some((token) => raw === token || raw.includes(token));
+  }
+  _speedValueMbit(port) {
+    return parseLinkSpeedMbit(this._hass, port?.speed_entity);
+  }
+  _linkLedClass(port) {
+    const connected = this._isPortConnected(port);
+    if (!connected) return "off";
+    const speed = this._speedValueMbit(port);
+    if (speed == null) return "green";
+    if (speed >= 1e3) return "green";
+    return "orange";
+  }
+  _portLedBlinkSpeed(mediaType) {
+    const mediaSpeed = mediaType === "sfp" ? this._config?.port_led_blink_speed_sfp : this._config?.port_led_blink_speed_rj45;
+    const speed = Number(mediaSpeed ?? this._config?.port_led_blink_speed);
+    if (!Number.isFinite(speed)) return 1;
+    return Math.min(1, Math.max(0.1, speed));
+  }
+  _portLedBlinkEnabled(mediaType) {
+    if (this._config?.port_led_blink !== true) return false;
+    return mediaType === "sfp" ? this._config?.port_led_blink_sfp !== false : this._config?.port_led_blink_rj45 !== false;
+  }
+  _poeLedClass(port) {
+    const poe = getPoeStatus(this._hass, port);
+    return poe.active ? "orange" : "off";
+  }
+  _portMediaType(slot) {
+    const explicitMedia = String(slot?.media || slot?.media_type || "").toLowerCase();
+    if (["rj45", "sfp", "sfp_plus", "sfp28"].includes(explicitMedia)) return explicitMedia;
+    const label = String(slot?.label || "").toLowerCase();
+    const key = String(slot?.key || "").toLowerCase();
+    const physicalKey = String(slot?.physical_key || "").toLowerCase();
+    const rawEntities = Array.isArray(slot?.raw_entities) ? slot.raw_entities.map((entityId) => String(entityId || "").toLowerCase()) : [];
+    const layoutSlot = Number.isInteger(slot?.port) ? (this._ctx?.layout?.specialSlots || []).find((s) => s.port === slot.port) : null;
+    const layoutMedia = String(layoutSlot?.media || layoutSlot?.media_type || "").toLowerCase();
+    if (["rj45", "sfp", "sfp_plus", "sfp28"].includes(layoutMedia)) return layoutMedia;
+    const layoutKey = String(layoutSlot?.key || "").toLowerCase();
+    const layoutLabel = String(layoutSlot?.label || "").toLowerCase();
+    const allHints = [label, key, physicalKey, layoutKey, layoutLabel, ...rawEntities].join(" ");
+    if (allHints.includes("sfp28") || allHints.includes("25g")) return "sfp28";
+    if (allHints.includes("sfp+") || allHints.includes("sfpplus") || allHints.includes("sfp_plus")) {
+      return "sfp_plus";
+    }
+    if (allHints.includes("sfp")) return "sfp";
+    return "rj45";
+  }
+  _isSfpLike(slot) {
+    return this._portMediaType(slot) !== "rj45";
+  }
+  _isWanLike(slot) {
+    const key = String(slot?.key || "").toLowerCase();
+    return key === "wan" || key === "wan2";
+  }
+  _renderContacts() {
+    return `
+      <div class="rj45-contacts">
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+      </div>
+    `;
+  }
+  _renderPortButton(slot, selectedKey, portClientIndex = null, oddEvenTopRow = false) {
+    const isSpecial = slot.kind === "special";
+    const mediaType = this._portMediaType(slot);
+    const isSfp = mediaType !== "rj45";
+    const isWan = this._isWanLike(slot);
+    const linkUp = this._isPortConnected(slot);
+    const speedText = linkUp ? getPortSpeedText(this._hass, slot) : null;
+    const compactSpeed = linkUp ? this._compactPortSpeed(slot) : "";
+    const vlan = this._getPortVlan(slot);
+    const poeStatus = getPoeStatus(this._hass, slot);
+    const poeOn = poeStatus.active;
+    const clientInfo = this._getMergedPortClientInfo(slot, portClientIndex);
+    const mergedNames = clientInfo?.names || [];
+    const mergedCount = clientInfo?.count || 0;
+    const clientLabel = mergedNames.length ? `${mergedNames[0]}${mergedCount > 1 ? ` +${mergedCount - 1}` : ""}` : mergedCount > 0 ? `${mergedCount} ${this._t("clients")}` : "";
+    const tooltip = [
+      slot.port_label || (isSpecial ? slot.label : `${this._t("port_label")} ${slot.label}`),
+      this._translateState(linkUp ? "connected" : "no_link"),
+      speedText ? `${this._t("speed")}: ${speedText}` : null,
+      vlan ? `${this._t("vlan")}: ${vlan.value}` : null,
+      poeOn ? `${this._t("poe")}${poeStatus.power ? ` ${poeStatus.power}` : " ON"}` : null,
+      mergedCount > 0 ? `${this._t("clients")}: ${mergedCount}` : null,
+      mergedNames.length ? mergedNames.join(", ") : null
+    ].filter((v) => v && v !== "\u2014").join(" \xB7 ");
+    const classes = [
+      "port",
+      isSpecial ? "special" : "",
+      isSfp ? "is-sfp" : "is-rj45",
+      `media-${this._safeClassToken(mediaType, "rj45")}`,
+      this._rotate180Enabled(this._ctx) ? "rotated180" : "",
+      isWan ? "is-wan" : "",
+      oddEvenTopRow && !isSpecial && !isSfp ? "odd-even-top" : "",
+      linkUp ? "up" : "down",
+      selectedKey === slot.key ? "selected" : "",
+      this._portLedBlinkEnabled(isSfp ? "sfp" : "rj45") ? "blink-link-led" : ""
+    ].filter(Boolean).join(" ");
+    const poeLed = this._poeLedClass(slot);
+    const linkLed = this._linkLedClass(slot);
+    const housing = isSfp ? `
+        <div class="port-sfp-wrap">
+          <div class="sfp-top-led ${linkLed}"></div>
+          <div class="port-sfp">
+            <div class="sfp-frame"></div>
+            <div class="sfp-rail top"></div>
+            <div class="sfp-rail bottom"></div>
+            <div class="sfp-slot"></div>
+            <div class="sfp-inner"></div>
+            <div class="sfp-latch"></div>
+          </div>
+        </div>
+      ` : `
+        <div class="port-rj45">
+          <div class="rj45-shell-top"></div>
+          ${this._renderContacts()}
+          <div class="rj45-cavity"></div>
+          <div class="rj45-led left ${poeLed}"></div>
+          <div class="rj45-led right ${linkLed}"></div>
+          <div class="rj45-notch"></div>
+          <div class="rj45-floor"></div>
+        </div>
+      `;
+    return `<button class="${this._escapeAttr(classes)}" data-key="${this._escapeAttr(slot.key)}" title="${this._escapeAttr(tooltip)}" aria-label="${this._escapeAttr(tooltip)}" aria-pressed="${selectedKey === slot.key ? "true" : "false"}">
+      <div class="port-housing">
+        ${housing}
+      </div>
+      <div class="port-num">${this._escapeHtml(slot.label)}</div>
+      <div class="port-meta" aria-hidden="true">
+        <span class="port-speed">${this._escapeHtml(compactSpeed || "\xA0")}</span>
+        <span class="port-vlan">${this._escapeHtml(vlan?.compact || "\xA0")}</span>
+      </div>
+      <div class="port-client" aria-hidden="true">${this._escapeHtml(clientLabel || "\xA0")}</div>
+    </button>`;
+  }
+  _styles() {
+    return `<style>
+      :host {
+        /* Fill the grid cell a sections view assigns. The section stretches
+           its items to the row height, but the stretch ends at an inline
+           host. In a masonry view the wrapper has no fixed height, so 100%
+           resolves to auto and nothing changes. */
+        display: block;
+        height: 100%;
+        container-type: inline-size;
+        container-name: unifi-device-card;
+        --udc-bg: #141820;
+        --udc-surface: #1e2433;
+        --udc-surf2: #252d3d;
+        --udc-border: color-mix(in srgb, var(--primary-text-color, #e2e8f0) 11%, transparent);
+        --udc-accent: var(--primary-color, #1688d4);
+        --udc-green: var(--success-color, #188447);
+        --udc-orange: var(--warning-color, #a86100);
+        --udc-text: #e2e8f0;
+        --udc-muted: var(--secondary-text-color, #6f7d90);
+        --udc-dim: color-mix(in srgb, var(--primary-text-color, #e2e8f0) 68%, transparent);
+        --udc-r: 16px;
+        --udc-rsm: 10px;
+        --udc-port-size: 36px;
+        --udc-ap-scale: 1;
+      }
+
+      ha-card {
+        background: var(--udc-card-bg, var(--ha-card-background, var(--card-background-color)));
+        border-radius: var(--ha-card-border-radius, 12px);
+        overflow: hidden;
+        position: relative;
+        isolation: isolate;
+        height: 100%;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--udc-border);
+        box-shadow: var(--ha-card-box-shadow, 0 18px 48px rgba(5, 10, 22, .18));
+        transition: box-shadow .22s ease, border-color .22s ease;
+      }
+
+      ha-card::before {
+        content: "";
+        position: absolute;
+        z-index: 5;
+        inset: 0 18% auto;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--udc-accent) 55%, transparent), transparent);
+        pointer-events: none;
+      }
+
+      .header {
+        padding: 17px 18px 14px;
+        background:
+          radial-gradient(circle at 92% -40%, color-mix(in srgb, var(--udc-accent) 12%, transparent), transparent 48%),
+          linear-gradient(155deg, color-mix(in srgb, var(--udc-chrome-bg, var(--udc-surface)) 96%, white 4%), var(--udc-chrome-bg, var(--udc-bg)));
+        border-bottom: 1px solid var(--udc-border);
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .header-info {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+
+      .title {
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: -.02em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--udc-title-color, var(--primary-text-color, var(--udc-text)));
+      }
+
+      .subtitle {
+        font-size: 0.73rem;
+        color: var(--udc-meta-color, var(--udc-muted));
+      }
+
+      .subtitle.device-link {
+        cursor: pointer;
+        width: fit-content;
+      }
+
+      .subtitle.device-link:hover,
+      .subtitle.device-link:focus-visible {
+        color: var(--primary-color, var(--udc-meta-color, var(--udc-muted)));
+        text-decoration: underline;
+      }
+
+      .subtitle.device-link:focus-visible {
+        outline: 2px solid var(--primary-color, currentColor);
+        outline-offset: 2px;
+        border-radius: 2px;
+      }
+
+      .meta-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 7px;
+      }
+
+      .meta-row {
+        display: flex;
+        gap: 4px;
+        align-items: baseline;
+        font-size: 0.69rem;
+        min-width: 0;
+        padding: 4px 7px;
+        border: 1px solid var(--udc-border);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--udc-chrome-bg, var(--udc-surface)) 88%, var(--primary-text-color, #fff) 12%);
+        color: var(--udc-telemetry-color, var(--primary-text-color, var(--udc-text)));
+      }
+
+      .meta-label {
+        color: inherit;
+        white-space: nowrap;
+        font-weight: 500;
+      }
+
+      .meta-value {
+        color: inherit;
+        font-weight: 600;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .product-showcase {
+        margin: 12px 14px 0;
+        height: clamp(152px, 25cqi, 222px);
+        min-height: 152px;
+        max-height: 250px;
+        position: relative;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        isolation: isolate;
+        border: 1px solid var(--udc-border);
+        border-radius: var(--udc-r);
+        background:
+          radial-gradient(circle at 50% 34%, #f3f5f7 0%, #dfe3e7 48%, #cbd1d7 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.86),
+          0 12px 30px rgba(3, 9, 20, .14);
+      }
+
+      .product-showcase::after {
+        content: "";
+        position: absolute;
+        z-index: -1;
+        left: 20%;
+        right: 20%;
+        bottom: 9%;
+        height: 18%;
+        border-radius: 50%;
+        background: rgba(60, 72, 90, .15);
+        filter: blur(16px);
+      }
+
+      .product-showcase.product-wide { height: clamp(148px, 23cqi, 208px); }
+      .product-showcase.product-square { height: clamp(184px, 31cqi, 260px); }
+      .product-showcase.product-portrait { height: clamp(238px, 42cqi, 320px); }
+
+      .product-showcase.image-error {
+        display: none;
+      }
+
+      .product-image {
+        display: block;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        max-height: none;
+        box-sizing: border-box;
+        padding: clamp(10px, 2.4cqi, 22px);
+        object-fit: contain;
+        object-position: center;
+        opacity: 0;
+        transform: scale(var(--product-image-scale, 1));
+        filter: drop-shadow(0 13px 15px rgba(27, 37, 52, .17));
+        transition: opacity .28s ease;
+      }
+
+      .product-showcase.image-loaded .product-image {
+        opacity: 1;
+      }
+
+      .product-showcase.product-wide .product-image {
+        padding: 0;
+        object-fit: cover;
+        object-position: center 54%;
+      }
+
+      .product-showcase.product-square .product-image {
+        padding: 4px;
+        object-fit: contain;
+      }
+
+      .product-view-toggle {
+        position: absolute;
+        z-index: 2;
+        left: 9px;
+        bottom: 8px;
+        display: flex;
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid rgba(255,255,255,.18);
+        border-radius: 999px;
+        background: rgba(20, 23, 28, .76);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 5px 16px rgba(3, 9, 20, .16);
+      }
+
+      .product-view-toggle button {
+        min-height: 32px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 999px;
+        color: rgba(248,250,252,.72);
+        background: transparent;
+        font: inherit;
+        font-size: .68rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .product-view-toggle button[aria-pressed="true"] {
+        color: #fff;
+        background: rgba(58, 155, 255, .82);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.28);
+      }
+
+      .product-view-toggle button:focus-visible {
+        outline: 2px solid #fff;
+        outline-offset: 2px;
+      }
+
+      .product-showcase figcaption {
+        position: absolute;
+        right: 9px;
+        bottom: 8px;
+        min-height: 28px;
+        display: flex;
+        align-items: center;
+        padding: 0 9px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,.18);
+        background: rgba(20, 23, 28, .76);
+        backdrop-filter: blur(10px);
+        font-size: .67rem;
+        font-weight: 650;
+      }
+
+      .product-showcase figcaption a {
+        color: #f8fafc;
+        text-decoration: none;
+      }
+
+      .product-showcase figcaption a:hover,
+      .product-showcase figcaption a:focus-visible {
+        text-decoration: underline;
+      }
+
+      .product-showcase figcaption a:focus-visible {
+        outline: 2px solid #fff;
+        outline-offset: 3px;
+        border-radius: 3px;
+      }
+
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        background: var(--udc-button-secondary-bg, var(--udc-surf2));
+        border: 1px solid var(--udc-button-border-color, var(--udc-border));
+        border-radius: 20px;
+        min-height: 30px;
+        padding: 3px 9px;
+        font-size: 0.68rem;
+        font-weight: 600;
+        white-space: nowrap;
+        color: var(--udc-button-secondary-text-color, var(--udc-dim));
+        flex-shrink: 0;
+      }
+
+      button.chip {
+        cursor: pointer;
+        font: inherit;
+      }
+
+      button.chip:hover {
+        filter: brightness(1.08);
+      }
+
+      .chip.compact {
+        min-height: 32px;
+        padding: 3px 9px;
+        font-size: 0.64rem;
+      }
+
+      .chip .dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--udc-muted);
+        box-shadow: none;
+      }
+
+      .connection-chip.active .dot {
+        background: var(--udc-green);
+        box-shadow: 0 0 6px color-mix(in srgb, var(--udc-green) 70%, transparent);
+        animation: blink 2.5s ease-in-out infinite;
+      }
+
+      .connection-chip.idle {
+        opacity: .78;
+      }
+
+      .chip .led-indicator {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--led-indicator, #868b93);
+        box-shadow: 0 0 6px color-mix(in srgb, var(--led-indicator, #868b93) 70%, transparent);
+      }
+
+      @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: .4; }
+      }
+
+      .frontpanel {
+        padding: 12px 14px 10px;
+        display: grid;
+        gap: 3px;
+        border-bottom: 1px solid var(--udc-border);
+        position: relative;
+        z-index: 0;
+        overflow: hidden;
+        /* In a stretched card the slack collects here, between the header
+           and the panel. Panels, details and buttons of one sections view
+           row then line up even when a device shows fewer telemetry lines.
+           As a nested block in the AP layout this resolves to 0. */
+        margin-top: auto;
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.55),
+          inset 0 -1px 0 rgba(67,72,80,.12);
+      }
+
+      .frontpanel.theme-white { background: #d6d6d9; }
+      .frontpanel.theme-silver { background: #c4c5c8; }
+      .frontpanel.theme-dark { background: #c4c5c8; }
+      .frontpanel.no-panel-bg { background: var(--udc-chrome-bg, transparent); }
+
+      .panel-label {
+        font-size: 0.63rem;
+        font-weight: 700;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        margin-bottom: 2px;
+        color: var(--udc-label-color, #7c818b);
+      }
+
+      .special-row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 3px;
+      }
+
+      .port-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 6px;
+        width: 100%;
+        align-items: flex-start;
+      }
+
+      .port-row-side {
+        display: flex;
+        gap: 6px;
+        margin-left: 12px;
+      }
+
+      .frontpanel.rotate180-enabled .panel-label {
+        text-align: right;
+      }
+
+      .frontpanel.rotate180-enabled .special-row {
+        justify-content: flex-end;
+      }
+
+      .frontpanel.rotate180-enabled .port-row {
+        justify-content: end;
+      }
+
+      .frontpanel.single-row .port-row,
+      .frontpanel.gateway-single-row .port-row {
+        --udc-cols: 8;
+      }
+
+      .frontpanel.dual-row .port-row {
+        --udc-cols: 8;
+      }
+
+      .frontpanel.gateway-rack .port-row {
+        --udc-cols: 8;
+      }
+
+      .frontpanel.gateway-compact .port-row {
+        --udc-cols: 5;
+      }
+
+      .frontpanel.six-grid .port-row {
+        --udc-cols: 6;
+      }
+
+      .frontpanel.eight-grid .port-row {
+        --udc-cols: 8;
+      }
+
+      .frontpanel.quad-row .port-row {
+        --udc-cols: 12;
+      }
+
+      .frontpanel.ultra-row .port-row {
+        --udc-cols: 7;
+      }
+
+      .frontpanel.grid-4 .port-row {
+        --udc-cols: 4;
+      }
+
+      .frontpanel.grid-5 .port-row {
+        --udc-cols: 5;
+      }
+
+      .frontpanel.grid-9 .port-row {
+        --udc-cols: 9;
+      }
+
+      .frontpanel.grid-10 .port-row {
+        --udc-cols: 10;
+      }
+
+      .frontpanel.ap-disc,
+      .frontpanel.ap-in-wall,
+      .frontpanel.ap-u7-outdoor,
+      .frontpanel.ap-mesh-column,
+      .frontpanel.ap-mesh-antenna,
+      .frontpanel.ap-ac-mesh,
+      .frontpanel.ap-mesh-pro,
+      .frontpanel.ap-outdoor-panel,
+      .frontpanel.ap-extender,
+      .frontpanel.ap-sector,
+      .frontpanel.ap-bridge,
+      .frontpanel.ap-device-bridge,
+      .frontpanel.ap-device-bridge-iot,
+      .frontpanel.ap-device-bridge-pro,
+      .frontpanel.ap-device-bridge-sector,
+      .frontpanel.ap-building-bridge,
+      .frontpanel.ap-e7,
+      .frontpanel.ap-e7-audience,
+      .frontpanel.ap-basestation,
+      .frontpanel.ap-5g-backup {
+        background: var(--udc-chrome-bg, linear-gradient(160deg, var(--udc-surface) 0%, var(--udc-bg) 100%));
+        display: grid;
+        place-items: center;
+        min-height: calc((225px * var(--udc-ap-scale)) + 34px);
+        border-bottom: 1px solid var(--udc-border);
+        position: relative;
+        overflow: hidden;
+        padding: 4px 14px;
+      }
+
+      .ap-layout > .frontpanel {
+        margin-top: 0;
+      }
+
+      .frontpanel.ap-ac-mesh {
+        min-height: calc((330px * var(--udc-ap-scale)) + 34px);
+      }
+
+      .frontpanel.ap-mesh-antenna {
+        min-height: calc((300px * var(--udc-ap-scale)) + 34px);
+      }
+
+      .frontpanel.ap-mesh-pro {
+        min-height: calc((280px * var(--udc-ap-scale)) + 34px);
+      }
+
+      .frontpanel.ap-device-bridge {
+        min-height: calc((280px * var(--udc-ap-scale)) + 34px);
+      }
+
+      .frontpanel.ap-device-bridge-iot {
+        min-height: calc((250px * var(--udc-ap-scale)) + 34px);
+      }
+
+      .frontpanel.ap-device-bridge-sector {
+        min-height: calc((310px * var(--udc-ap-scale)) + 34px);
+      }
+
+      .ap-layout.compact {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-items: stretch;
+      }
+
+      .ap-layout.has-product-image.compact {
+        grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+      }
+
+      .ap-layout.has-product-image.compact > .product-showcase.ap-product {
+        width: auto;
+        height: auto;
+        min-height: 248px;
+        max-height: none;
+        margin: 0;
+        border-width: 0 1px 0 0;
+        border-radius: 0;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.82);
+      }
+
+      .ap-layout:not(.compact) > .product-showcase.ap-product {
+        margin-bottom: 0;
+      }
+
+      .ap-layout.compact .frontpanel.ap-disc,
+      .ap-layout.compact .frontpanel.ap-in-wall,
+      .ap-layout.compact .frontpanel.ap-u7-outdoor,
+      .ap-layout.compact .frontpanel.ap-mesh-column,
+      .ap-layout.compact .frontpanel.ap-mesh-antenna,
+      .ap-layout.compact .frontpanel.ap-ac-mesh,
+      .ap-layout.compact .frontpanel.ap-mesh-pro,
+      .ap-layout.compact .frontpanel.ap-outdoor-panel,
+      .ap-layout.compact .frontpanel.ap-extender,
+      .ap-layout.compact .frontpanel.ap-sector,
+      .ap-layout.compact .frontpanel.ap-bridge,
+      .ap-layout.compact .frontpanel.ap-device-bridge,
+      .ap-layout.compact .frontpanel.ap-device-bridge-iot,
+      .ap-layout.compact .frontpanel.ap-device-bridge-pro,
+      .ap-layout.compact .frontpanel.ap-device-bridge-sector,
+      .ap-layout.compact .frontpanel.ap-building-bridge,
+      .ap-layout.compact .frontpanel.ap-e7,
+      .ap-layout.compact .frontpanel.ap-e7-audience,
+      .ap-layout.compact .frontpanel.ap-basestation,
+      .ap-layout.compact .frontpanel.ap-5g-backup {
+        min-height: 0;
+        border-bottom: none;
+        border-right: 1px solid var(--udc-border);
+      }
+
+      .ap-layout.compact > .frontpanel:not(.ap-disc):not(.ap-in-wall):not(.ap-u7-outdoor):not(.ap-5g-backup) {
+        min-height: calc((225px * var(--udc-ap-scale)) + 34px);
+      }
+
+      .ap-layout.compact > .frontpanel.ap-mesh-antenna {
+        min-height: calc((280px * var(--udc-ap-scale)) + 34px);
+      }
+
+      .ap-layout.compact > .frontpanel.ap-ac-mesh {
+        min-height: calc((250px * var(--udc-ap-scale)) + 34px);
+      }
+
+      .ap-layout.compact .ap-device {
+        width: min(100%, calc(180px * var(--udc-ap-scale)));
+      }
+
+      .ap-layout.compact .ap-device.ap-5g-device {
+        width: min(100%, calc(118px * var(--udc-ap-scale)));
+      }
+
+      .ap-layout.compact .ap-device.ap-in-wall-device {
+        width: min(100%, calc(112px * var(--udc-ap-scale)));
+      }
+
+      .ap-layout.compact .ap-device.ap-u7-outdoor-device {
+        width: min(100%, calc(150px * var(--udc-ap-scale)));
+      }
+
+      .ap-layout.compact .ap-device.ap-shaped-device {
+        width: min(100%, calc(105px * var(--udc-ap-scale)));
+      }
+
+      .ap-layout.compact .ap-device.ap-ac-mesh-device {
+        width: min(100%, calc(48px * var(--udc-ap-scale)));
+      }
+
+      .ap-layout.compact .ap-device.ap-device-bridge-device {
+        width: min(100%, calc(90px * var(--udc-ap-scale)));
+      }
+
+      .ap-layout.compact .ap-device.ap-device-bridge-iot-device {
+        width: min(100%, calc(85px * var(--udc-ap-scale)));
+      }
+
+      .ap-layout.compact .ap-device.ap-device-bridge-sector-device {
+        width: min(100%, calc(85px * var(--udc-ap-scale)));
+      }
+
+      .ap-layout.compact .section {
+        display: grid;
+        align-content: center;
+      }
+
+      .ap-layout.compact .detail-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-bottom: 0;
+      }
+
+
+      .integrated-port-section {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(220px, .9fr);
+        gap: 0;
+        border-top: 1px solid var(--udc-border);
+      }
+
+      .frontpanel.integrated-ports {
+        border-bottom: none;
+        border-right: 1px solid var(--udc-border);
+      }
+
+      .integrated-port-detail {
+        display: grid;
+        align-content: center;
+      }
+
+      .ap-layout.has-integrated-ports {
+        border-bottom: none;
+      }
+
+      .ap-device {
+        width: calc(225px * var(--udc-ap-scale));
+        height: auto;
+        aspect-ratio: 1 / 1;
+        max-width: 100%;
+        border-radius: 50%;
+        background: var(--udc-ap-inner-color, var(--udc-ap-color, radial-gradient(circle at 30% 28%, #e9edf4 0%, #cfd5df 52%, #b6becb 100%)));
+        box-shadow:
+          inset -8px -10px 16px rgba(0,0,0,.08),
+          inset 9px 12px 17px rgba(255,255,255,.7),
+          0 12px 22px rgba(0,0,0,.18);
+        display: grid;
+        place-items: center;
+      }
+
+      .ap-5g-device {
+        width: calc(132px * var(--udc-ap-scale));
+        height: auto;
+        aspect-ratio: 132 / 320;
+        border-radius: 24.24% / 10%;
+        background: linear-gradient(90deg, #383b3e 0 13%, #f7f8f8 13% 87%, #383b3e 87% 100%);
+        box-shadow:
+          inset 11px 0 14px rgba(255,255,255,.5),
+          inset -11px 0 14px rgba(0,0,0,.08),
+          0 16px 28px rgba(0,0,0,.24);
+        position: relative;
+        overflow: hidden;
+        container-type: inline-size;
+      }
+
+      .ap-5g-face {
+        position: absolute;
+        inset: 0 15%;
+        border-radius: 18.18cqw;
+        background: linear-gradient(90deg, #f2f4f4 0%, #ffffff 44%, #eff2f2 100%);
+        box-shadow:
+          inset 8px 0 14px rgba(255,255,255,.68),
+          inset -8px 0 12px rgba(0,0,0,.04);
+      }
+
+      .ap-5g-display {
+        position: absolute;
+        left: 50%;
+        top: 61%;
+        width: 44%;
+        aspect-ratio: .74 / 1;
+        transform: translate(-50%, -50%);
+        border-radius: 5.3cqw;
+        background: linear-gradient(180deg, #071128 0%, #0d1733 64%, #07101f 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.22),
+          0 2px 5px rgba(0,0,0,.28);
+        color: #eaf3ff;
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        gap: 3.03cqw;
+        padding: 4.55cqw;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        font-weight: 700;
+        line-height: 1;
+        box-sizing: border-box;
+      }
+
+      .ap-5g-display-top {
+        font-size: 9.85cqw;
+      }
+
+      .ap-5g-bars {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        align-items: end;
+        gap: .76cqw;
+        height: 13.64cqw;
+      }
+
+      .ap-5g-bars span {
+        display: block;
+        border-radius: 1px;
+        background: #1fc56c;
+        box-shadow: 0 0 3px rgba(31,197,108,.35);
+      }
+
+      .ap-5g-bars span:nth-child(1) { height: 45%; }
+      .ap-5g-bars span:nth-child(2) { height: 58%; }
+      .ap-5g-bars span:nth-child(3) { height: 72%; }
+      .ap-5g-bars span:nth-child(4) { height: 86%; }
+      .ap-5g-bars span:nth-child(5) { height: 100%; }
+
+      .ap-5g-bars span.inactive {
+        background: rgba(198,216,237,.24);
+        box-shadow: none;
+      }
+
+      .ap-5g-uptime {
+        color: #c6d8ed;
+        display: grid;
+        gap: .76cqw;
+        font-size: 3.79cqw;
+        line-height: 1;
+        text-align: center;
+      }
+
+      .ap-5g-uptime-value {
+        color: #eaf3ff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ap-5g-metrics {
+        align-self: end;
+        display: grid;
+        gap: 2.27cqw;
+      }
+
+      .ap-5g-metric {
+        display: grid;
+        grid-template-columns: 9.85cqw 1fr;
+        align-items: center;
+        gap: 2.27cqw;
+        color: #c6d8ed;
+        font-size: 3.79cqw;
+      }
+
+      .ap-5g-meter {
+        height: 3.03cqw;
+        border-radius: 999px;
+        background: rgba(255,255,255,.18);
+        overflow: hidden;
+      }
+
+      .ap-5g-meter span {
+        display: block;
+        width: var(--ap-5g-meter-value, 0%);
+        height: 100%;
+        border-radius: inherit;
+        background: #2aa7ff;
+      }
+
+      .ap-5g-meter.memory span {
+        background: #34d979;
+      }
+
+      .ap-5g-label {
+        position: absolute;
+        left: 50%;
+        top: 78%;
+        transform: translateX(-50%);
+        color: rgba(210,215,218,.58);
+        font-size: 7.58cqw;
+        white-space: nowrap;
+      }
+
+      .ap-in-wall-device {
+        width: calc(132px * var(--udc-ap-scale));
+        aspect-ratio: .64 / 1;
+        border-radius: calc(25px * var(--udc-ap-scale));
+        background: linear-gradient(145deg, #ffffff 0%, #f7f8f9 58%, #e9ecef 100%);
+        border: 1px solid rgba(150, 158, 166, .22);
+        box-shadow:
+          inset 8px 10px 15px rgba(255,255,255,.8),
+          inset -8px -10px 16px rgba(120,128,136,.08),
+          0 14px 24px rgba(0,0,0,.18);
+        display: grid;
+        place-items: center;
+        position: relative;
+      }
+
+      .ap-in-wall-led {
+        position: absolute;
+        top: 18%;
+        left: 50%;
+        width: calc(14px * var(--udc-ap-scale));
+        height: calc(3px * var(--udc-ap-scale));
+        transform: translateX(-50%);
+        border-radius: 999px;
+        background: var(--ap-ring-color, #62c8fa);
+        box-shadow: 0 0 6px color-mix(in srgb, var(--ap-ring-color, #62c8fa) 55%, transparent);
+      }
+
+      .ap-in-wall-led.off {
+        background: #aeb4ba;
+        box-shadow: none;
+      }
+
+      .ap-in-wall-logo {
+        color: rgba(180, 188, 195, .48);
+        font: 700 calc(34px * var(--udc-ap-scale))/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+        transform: translateY(calc(5px * var(--udc-ap-scale)));
+        user-select: none;
+      }
+
+      .ap-u7-outdoor-device {
+        width: calc(184px * var(--udc-ap-scale));
+        aspect-ratio: .82 / 1;
+        border-radius: calc(35px * var(--udc-ap-scale));
+        background: linear-gradient(145deg, #ffffff 0%, #f5f6f7 58%, #e5e8ea 100%);
+        border: 1px solid rgba(150, 158, 166, .18);
+        box-shadow:
+          inset 9px 11px 17px rgba(255,255,255,.85),
+          inset -9px -11px 18px rgba(120,128,136,.09),
+          0 14px 24px rgba(0,0,0,.18);
+        display: grid;
+        place-items: center;
+        position: relative;
+      }
+
+      .ap-u7-outdoor-logo {
+        color: rgba(180, 188, 195, .42);
+        font: 700 calc(37px * var(--udc-ap-scale))/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+        transform: translateY(calc(-10px * var(--udc-ap-scale)));
+        user-select: none;
+      }
+
+      .ap-u7-outdoor-led {
+        position: absolute;
+        left: 50%;
+        bottom: 17%;
+        width: calc(4px * var(--udc-ap-scale));
+        height: calc(4px * var(--udc-ap-scale));
+        transform: translateX(-50%);
+        border-radius: 50%;
+        background: var(--ap-ring-color, #62c8fa);
+        box-shadow: 0 0 6px color-mix(in srgb, var(--ap-ring-color, #62c8fa) 65%, transparent);
+      }
+
+      .ap-u7-outdoor-led.off {
+        background: #aeb4ba;
+        box-shadow: none;
+      }
+
+      .ap-shaped-device {
+        width: calc(122px * var(--udc-ap-scale));
+        aspect-ratio: .48 / 1;
+        border-radius: calc(54px * var(--udc-ap-scale));
+        background: linear-gradient(145deg, #fff 0%, #f3f5f6 62%, #dfe3e6 100%);
+        border: 1px solid rgba(150, 158, 166, .2);
+        box-shadow: inset 8px 10px 15px rgba(255,255,255,.8), inset -8px -10px 16px rgba(120,128,136,.08), 0 14px 24px rgba(0,0,0,.18);
+        position: relative;
+      }
+
+      .ap-shaped-logo {
+        position: absolute;
+        left: 50%; top: 45%;
+        transform: translate(-50%, -50%);
+        color: rgba(170, 180, 187, .44);
+        font: 700 calc(30px * var(--udc-ap-scale))/1 ui-sans-serif, system-ui, sans-serif;
+      }
+
+      .ap-shaped-led {
+        position: absolute;
+        left: 50%; bottom: 10%;
+        width: calc(5px * var(--udc-ap-scale)); height: calc(5px * var(--udc-ap-scale));
+        transform: translateX(-50%); border-radius: 50%;
+        background: var(--ap-ring-color, #62c8fa);
+        box-shadow: 0 0 7px color-mix(in srgb, var(--ap-ring-color, #62c8fa) 65%, transparent);
+      }
+
+      .ap-shaped-led.off { background: #aeb4ba; box-shadow: none; }
+
+      .ap-mesh-column-device {
+        border-radius: 48% 48% 30% 30% / 12% 12% 7% 7%;
+        background: linear-gradient(90deg, #e5e8ea 0%, #fff 36%, #f8f9f9 61%, #d8dcdf 100%);
+      }
+
+      .ap-mesh-column-device::before {
+        content: "";
+        position: absolute;
+        z-index: 1;
+        box-sizing: border-box;
+        left: -1px;
+        top: -1px;
+        width: calc(100% + 2px);
+        height: 17%;
+        border: max(2px, calc(3px * var(--udc-ap-scale))) solid var(--ap-ring-color, #62c8fa);
+        border-radius: 50%;
+        background: radial-gradient(ellipse at 50% 40%, #fff 0%, #f4f6f7 58%, #dce1e4 100%);
+        box-shadow: 0 0 calc(9px * var(--udc-ap-scale)) color-mix(in srgb, var(--ap-ring-color, #62c8fa) 58%, transparent);
+      }
+
+      .ap-mesh-column-device.off::before {
+        border-color: #aeb4ba;
+        box-shadow: none;
+      }
+
+      .ap-mesh-column-device .ap-shaped-logo {
+        z-index: 2;
+        top: 7.5%;
+        font-size: calc(17px * var(--udc-ap-scale));
+      }
+
+      .ap-mesh-column-device .ap-shaped-led { display: none; }
+
+      .ap-mesh-antenna-device { width: calc(105px * var(--udc-ap-scale)); aspect-ratio: .55 / 1; border-radius: calc(22px * var(--udc-ap-scale)); transform: translateY(calc(15px * var(--udc-ap-scale))); }
+      .ap-mesh-antenna-device::before,
+      .ap-mesh-antenna-device::after {
+        content: ""; position: absolute; bottom: 94%; width: 17%; height: 35%;
+        border-radius: 999px; background: linear-gradient(90deg, #dfe3e6, #fff 48%, #d9dde0);
+        box-shadow: 0 4px 5px rgba(0,0,0,.12);
+      }
+      .ap-mesh-antenna-device::before { left: 15%; transform: rotate(-5deg); }
+      .ap-mesh-antenna-device::after { right: 15%; transform: rotate(5deg); }
+
+      .ap-ac-mesh-device {
+        width: calc(72px * var(--udc-ap-scale));
+        aspect-ratio: .35 / 1;
+        border-radius: 24% 24% 50% 50% / 8% 8% 13% 13%;
+        background: linear-gradient(90deg, #e1e5e7 0%, #fff 38%, #f7f8f8 64%, #d6dbde 100%);
+        transform: translateY(calc(24px * var(--udc-ap-scale)));
+      }
+
+      .ap-ac-mesh-device::before,
+      .ap-ac-mesh-device::after {
+        content: "";
+        position: absolute;
+        bottom: 94%;
+        width: 16%;
+        height: 58%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #d9dde0, #fff 48%, #d5dadd);
+        box-shadow: 0 3px 5px rgba(0,0,0,.13);
+        transform-origin: 50% 100%;
+      }
+
+      .ap-ac-mesh-device::before { left: 12%; transform: rotate(-43deg); }
+      .ap-ac-mesh-device::after { right: 12%; transform: rotate(43deg); }
+
+      .ap-ac-mesh-device .ap-shaped-logo {
+        top: 49%;
+        font-size: calc(22px * var(--udc-ap-scale));
+      }
+
+      .ap-mesh-pro-device {
+        width: calc(145px * var(--udc-ap-scale));
+        aspect-ratio: .55 / 1;
+        border-radius: 3% / 2%;
+        background: linear-gradient(90deg, #e1e5e7 0%, #f8f9f9 13%, #f5f7f7 87%, #d8dddf 100%);
+      }
+
+      .ap-mesh-pro-device .ap-shaped-logo {
+        top: 49%;
+        font-size: calc(28px * var(--udc-ap-scale));
+      }
+
+      .ap-mesh-pro-device .ap-shaped-led {
+        bottom: 25%;
+        width: calc(18px * var(--udc-ap-scale));
+        height: calc(3px * var(--udc-ap-scale));
+        border-radius: 999px;
+      }
+
+      .ap-outdoor-panel-device { width: calc(164px * var(--udc-ap-scale)); aspect-ratio: .68 / 1; border-radius: calc(25px * var(--udc-ap-scale)); }
+      .ap-extender-device { width: calc(130px * var(--udc-ap-scale)); aspect-ratio: .62 / 1; border-radius: calc(28px * var(--udc-ap-scale)); }
+      .ap-extender-device::after { content: ""; position: absolute; left: 50%; bottom: 5%; width: 27%; height: 7%; transform: translateX(-50%); border-radius: 2px; background: #d8dcdf; }
+      .ap-sector-device { width: calc(180px * var(--udc-ap-scale)); aspect-ratio: .78 / 1; border-radius: 50% 50% 14% 14% / 18% 18% 8% 8%; }
+      .ap-sector-device::before { content: ""; position: absolute; inset: 7% 8% 12%; border: 1px solid rgba(165,174,181,.24); border-radius: inherit; }
+      .ap-bridge-device { width: calc(176px * var(--udc-ap-scale)); aspect-ratio: 1 / 1; border-radius: 50%; }
+      .ap-bridge-device::before { content: ""; position: absolute; inset: 9%; border: 2px solid rgba(177,185,191,.25); border-radius: 50%; }
+
+      .ap-device-bridge-device {
+        width: calc(115px * var(--udc-ap-scale));
+        aspect-ratio: .45 / 1;
+        border-radius: 14% / 7%;
+        background: linear-gradient(90deg, #dfe3e5 0%, #fff 34%, #f7f8f8 68%, #d7dcde 100%);
+      }
+
+      .ap-device-bridge-device::before {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 14%;
+        width: calc(3px * var(--udc-ap-scale));
+        height: calc(3px * var(--udc-ap-scale));
+        transform: translateX(-50%);
+        border-radius: 50%;
+        background: var(--ap-ring-color, #62c8fa);
+        box-shadow:
+          0 calc(7px * var(--udc-ap-scale)) 0 var(--ap-ring-color, #62c8fa),
+          0 calc(14px * var(--udc-ap-scale)) 0 var(--ap-ring-color, #62c8fa),
+          0 calc(21px * var(--udc-ap-scale)) 0 var(--ap-ring-color, #62c8fa),
+          0 calc(28px * var(--udc-ap-scale)) 0 var(--ap-ring-color, #62c8fa);
+      }
+
+      .ap-device-bridge-device.off::before {
+        background: #aeb4ba;
+        box-shadow:
+          0 calc(7px * var(--udc-ap-scale)) 0 #aeb4ba,
+          0 calc(14px * var(--udc-ap-scale)) 0 #aeb4ba,
+          0 calc(21px * var(--udc-ap-scale)) 0 #aeb4ba,
+          0 calc(28px * var(--udc-ap-scale)) 0 #aeb4ba;
+      }
+
+      .ap-device-bridge-device::after {
+        content: "";
+        position: absolute;
+        left: 47%;
+        bottom: 99%;
+        width: 6%;
+        height: 4%;
+        border-radius: 2px 2px 0 0;
+        background: #62686c;
+      }
+
+      .ap-device-bridge-device .ap-shaped-led { display: none; }
+
+      .ap-device-bridge-iot-device {
+        width: calc(125px * var(--udc-ap-scale));
+        aspect-ratio: .75 / 1;
+        border-radius: 8% / 6%;
+        background: linear-gradient(90deg, #dfe3e5 0%, #fff 34%, #f7f8f8 68%, #d7dcde 100%);
+      }
+
+      .ap-device-bridge-iot-device::before {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 27%;
+        width: calc(3px * var(--udc-ap-scale));
+        height: calc(3px * var(--udc-ap-scale));
+        transform: translateX(-50%);
+        border-radius: 50%;
+        background: var(--ap-ring-color, #62c8fa);
+        box-shadow:
+          0 calc(7px * var(--udc-ap-scale)) 0 var(--ap-ring-color, #62c8fa),
+          0 calc(14px * var(--udc-ap-scale)) 0 var(--ap-ring-color, #62c8fa),
+          0 calc(21px * var(--udc-ap-scale)) 0 var(--ap-ring-color, #62c8fa),
+          0 calc(28px * var(--udc-ap-scale)) 0 var(--ap-ring-color, #62c8fa);
+      }
+
+      .ap-device-bridge-iot-device.off::before {
+        background: #aeb4ba;
+        box-shadow:
+          0 calc(7px * var(--udc-ap-scale)) 0 #aeb4ba,
+          0 calc(14px * var(--udc-ap-scale)) 0 #aeb4ba,
+          0 calc(21px * var(--udc-ap-scale)) 0 #aeb4ba,
+          0 calc(28px * var(--udc-ap-scale)) 0 #aeb4ba;
+      }
+
+      .ap-device-bridge-iot-device::after {
+        content: "";
+        position: absolute;
+        left: 39%;
+        bottom: 98%;
+        width: 22%;
+        height: 48%;
+        border-radius: 45% 45% 10% 10% / 8% 8% 4% 4%;
+        background: linear-gradient(90deg, #d9dddf, #fff 48%, #d4d9dc);
+        border-bottom: 1px solid rgba(150,158,166,.3);
+        box-shadow: 0 3px 5px rgba(0,0,0,.12);
+      }
+
+      .ap-device-bridge-iot-device .ap-shaped-logo {
+        top: 73%;
+        font-size: calc(25px * var(--udc-ap-scale));
+      }
+
+      .ap-device-bridge-iot-device .ap-shaped-led { display: none; }
+
+      .ap-device-bridge-sector-device {
+        width: calc(120px * var(--udc-ap-scale));
+        aspect-ratio: .42 / 1;
+        border-radius: 18% 18% 24% 24% / 6% 6% 5% 5%;
+        background: linear-gradient(90deg, #dce1e3 0%, #fff 31%, #f7f8f8 67%, #d5dadd 100%);
+      }
+
+      .ap-device-bridge-sector-device .ap-shaped-logo {
+        top: 56%;
+        font-size: calc(24px * var(--udc-ap-scale));
+      }
+
+      .ap-device-bridge-sector-device .ap-shaped-led { display: none; }
+
+      .ap-building-bridge-device,
+      .ap-device-bridge-pro-device {
+        width: calc(210px * var(--udc-ap-scale));
+        aspect-ratio: 1 / 1;
+        border-radius: 50%;
+        background: radial-gradient(circle at 40% 30%, #fff 0%, #f5f7f8 52%, #dfe4e7 100%);
+      }
+
+      .ap-basestation-device {
+        width: calc(235px * var(--udc-ap-scale));
+        aspect-ratio: 1.9 / 1;
+        border-radius: 12% / 22%;
+      }
+
+      .ap-basestation-device::before {
+        content: "";
+        position: absolute;
+        left: 28%;
+        top: 98%;
+        width: 44%;
+        height: 18%;
+        background: linear-gradient(90deg, transparent 0 8%, #eef0f1 8% 25%, transparent 25% 75%, #eef0f1 75% 92%, transparent 92%);
+        filter: drop-shadow(0 2px 2px rgba(0,0,0,.15));
+      }
+
+      .ap-basestation-device::after {
+        content: "";
+        position: absolute;
+        left: 45%;
+        top: 99%;
+        width: 10%;
+        height: 7%;
+        border-radius: 0 0 4px 4px;
+        background: #30363a;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 2px 3px rgba(0,0,0,.2);
+      }
+
+      .ap-e7-audience-device {
+        width: calc(235px * var(--udc-ap-scale));
+        aspect-ratio: 2 / 1;
+        border-radius: 11% / 22%;
+      }
+
+      .ap-e7-audience-device::after {
+        content: "";
+        position: absolute;
+        left: 43%;
+        top: 98%;
+        width: 14%;
+        height: 8%;
+        border-radius: 0 0 5px 5px;
+        background: #30363a;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 2px 3px rgba(0,0,0,.2);
+      }
+
+      .ap-shaped-device.edge-glow {
+        box-shadow:
+          inset 8px 10px 15px rgba(255,255,255,.82),
+          inset -8px -10px 16px rgba(120,128,136,.08),
+          0 0 0 max(1px, calc(2px * var(--udc-ap-scale))) var(--ap-ring-color, #62c8fa),
+          0 0 calc(16px * var(--udc-ap-scale)) color-mix(in srgb, var(--ap-ring-color, #62c8fa) 58%, transparent),
+          0 14px 24px rgba(0,0,0,.18);
+      }
+
+      .ap-shaped-device.edge-glow.off {
+        box-shadow:
+          inset 8px 10px 15px rgba(255,255,255,.82),
+          inset -8px -10px 16px rgba(120,128,136,.08),
+          0 14px 24px rgba(0,0,0,.18);
+      }
+
+      .ap-shaped-device.edge-glow .ap-shaped-led { display: none; }
+
+      .ap-e7-device {
+        width: calc(210px * var(--udc-ap-scale));
+        aspect-ratio: 1 / 1;
+        border-radius: 23%;
+      }
+
+      .ap-ring {
+        width: 41%;
+        height: 41%;
+        border-radius: 50%;
+        border: max(2px, calc(4px * var(--udc-ap-scale))) solid var(--ap-ring-color, var(--udc-ap-ring-color, var(--udc-ap-color, #a5adb8)));
+        box-shadow: 0 0 11px rgba(165,173,184,.35);
+        display: grid;
+        place-items: center;
+        transition: border-color .18s ease, box-shadow .18s ease;
+      }
+
+      .ap-ring.online {
+        border-color: var(--ap-ring-color, var(--udc-ap-ring-color, var(--udc-ap-color, rgb(0, 0, 255))));
+        box-shadow:
+          0 0 12px color-mix(in srgb, var(--ap-ring-color, var(--udc-ap-ring-color, var(--udc-ap-color, rgb(0, 0, 255)))) 55%, transparent),
+          0 0 24px color-mix(in srgb, var(--ap-ring-color, var(--udc-ap-ring-color, var(--udc-ap-color, rgb(0, 0, 255)))) 32%, transparent);
+      }
+
+      .ap-ring.off {
+        border-color: #868b93;
+        box-shadow: inset 0 -1px 0 rgba(0,0,0,.2);
+      }
+
+      .ap-logo {
+        color: rgba(82, 89, 102, .55);
+        font-size: calc(42px * var(--udc-ap-scale));
+        font-weight: 700;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        line-height: 1;
+        transform: translateY(-1px);
+        user-select: none;
+      }
+
+      .port {
+        cursor: pointer;
+        font: inherit;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: calc(var(--udc-port-size) - 2px);
+        flex: 0 0 calc(var(--udc-port-size) - 2px);
+        padding: 0 0 1px;
+        border-radius: 2px;
+        position: relative;
+        min-width: 0;
+        border: none;
+        background: transparent;
+        transition: outline .1s ease, opacity .15s ease, filter .15s ease;
+      }
+
+      .port:focus {
+        outline: none;
+      }
+
+      .port:focus-visible {
+        outline: 3px solid color-mix(in srgb, var(--udc-accent) 82%, white 18%);
+        outline-offset: 3px;
+        border-radius: 4px;
+      }
+
+      .port.selected {
+        outline: 2px solid var(--udc-accent);
+        outline-offset: 1px;
+      }
+
+      .port:hover {
+        outline: 1px solid rgba(0,144,217,.5);
+        outline-offset: 1px;
+      }
+
+      .port-housing {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        transition: opacity .15s ease, filter .15s ease;
+      }
+
+      .port.rotated180 .port-housing {
+        transform: rotate(180deg);
+      }
+
+      .port.down .port-housing {
+        opacity: .42;
+        filter: saturate(.45) brightness(.78);
+      }
+
+      .port.up .port-housing {
+        opacity: 1;
+        filter: saturate(1.05) brightness(1.02);
+      }
+
+      .port:hover .port-housing,
+      .port.selected .port-housing {
+        opacity: 1;
+        filter: none;
+      }
+
+      .port-rj45 {
+        position: relative;
+        width: calc(var(--udc-port-size) - 2px);
+        height: calc(var(--udc-port-size) - 2px);
+        background: linear-gradient(180deg, #2e3137 0%, #0b0c0e 100%);
+        border: 1px solid #666a72;
+        border-radius: 1px 1px 2px 2px;
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.05),
+          inset 0 -1px 0 rgba(0,0,0,.45);
+        overflow: hidden;
+        z-index: 0;
+      }
+
+      .port.odd-even-top .port-rj45 {
+        transform: rotate(180deg);
+        transform-origin: 50% 50%;
+      }
+
+      .port.odd-even-top .rj45-led.left {
+        left: 50%;
+        right: 0;
+        margin-left: 3px;
+        margin-right: 0;
+      }
+
+      .port.odd-even-top .rj45-led.right {
+        right: 50%;
+        left: 0;
+        margin-right: 3px;
+        margin-left: 0;
+      }
+
+      .rj45-shell-top {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: linear-gradient(180deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,0) 100%);
+        pointer-events: none;
+      }
+
+      .rj45-contacts {
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        right: 4px;
+        height: 3px;
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 1px;
+        z-index: 2;
+      }
+
+      .rj45-contacts span {
+        display: block;
+        background: #caa252;
+        min-width: 0;
+      }
+
+      .rj45-cavity {
+        position: absolute;
+        top: 8px;
+        left: 3px;
+        right: 3px;
+        bottom: 2px;
+        background: linear-gradient(180deg, #14181d 0%, #060708 100%);
+        z-index: 1;
+      }
+
+      .rj45-led {
+        position: absolute;
+        bottom: 1px;
+        height: 4px;
+        border-radius: 0;
+        background: linear-gradient(180deg, #9ea3ab 0%, #767c85 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.16),
+          inset 0 -1px 0 rgba(0,0,0,.28);
+        z-index: 1;
+      }
+
+      .rj45-led.left {
+        left: 0;
+        right: 50%;
+        margin-right: 3px;
+      }
+
+      .rj45-led.right {
+        right: 0;
+        left: 50%;
+        margin-left: 3px;
+      }
+
+      .rj45-led.orange {
+        background: linear-gradient(180deg, #efc14d 0%, #efb21a 58%, #b8820d 100%);
+        box-shadow:
+          0 0 2px rgba(239,178,26,.42),
+          inset 0 1px 0 rgba(255,255,255,.22),
+          inset 0 -1px 0 rgba(0,0,0,.35);
+      }
+
+      .rj45-led.green {
+        background: linear-gradient(180deg, #63ea86 0%, #33d35d 58%, #1c8e3a 100%);
+        box-shadow:
+          0 0 2px rgba(51,211,93,.42),
+          inset 0 1px 0 rgba(255,255,255,.22),
+          inset 0 -1px 0 rgba(0,0,0,.35);
+      }
+
+      .rj45-led.off {
+        background: #868b93;
+        box-shadow: inset 0 -1px 0 rgba(0,0,0,.2);
+      }
+
+      .port.is-rj45.blink-link-led .rj45-led.right:not(.off) {
+        animation: udc-port-link-blink ${this._portLedBlinkSpeed("rj45")}s step-end infinite;
+      }
+
+      .port.is-sfp.blink-link-led .sfp-top-led:not(.off) {
+        animation: udc-port-link-blink ${this._portLedBlinkSpeed("sfp")}s step-end infinite;
+      }
+
+      @keyframes udc-port-link-blink {
+        50% { opacity: .22; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .port.blink-link-led .rj45-led.right:not(.off),
+        .port.blink-link-led .sfp-top-led:not(.off),
+        .connection-chip.active .dot,
+        .spinner {
+          animation: none;
+        }
+
+        ha-card,
+        .product-image,
+        .port,
+        .port-housing,
+        .port-num,
+        .port-meta,
+        .action-btn,
+        .ap-ring {
+          transition: none;
+        }
+      }
+
+      .rj45-notch {
+        position: absolute;
+        left: 35%;
+        right: 35%;
+        bottom: 0;
+        height: 6px;
+        background: #d0d1d4;
+        border-radius: 1px 1px 0 0;
+        z-index: 6;
+      }
+
+      .rj45-floor {
+        position: absolute;
+        left: 3px;
+        right: 3px;
+        bottom: 0;
+        height: 2px;
+        background: #0e1014;
+        z-index: 2;
+      }
+
+      .port-sfp-wrap {
+        width: 100%;
+        display: grid;
+        justify-items: center;
+        gap: 1px;
+      }
+
+      .sfp-top-led {
+        width: 16px;
+        height: 4px;
+        border-radius: 0;
+        background: linear-gradient(180deg, #9ea3ab 0%, #767c85 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.16),
+          inset 0 -1px 0 rgba(0,0,0,.28);
+      }
+
+      .sfp-top-led.orange {
+        background: linear-gradient(180deg, #efc14d 0%, #efb21a 58%, #b8820d 100%);
+        box-shadow:
+          0 0 2px rgba(239,178,26,.42),
+          inset 0 1px 0 rgba(255,255,255,.22),
+          inset 0 -1px 0 rgba(0,0,0,.35);
+      }
+
+      .sfp-top-led.green {
+        background: linear-gradient(180deg, #63ea86 0%, #33d35d 58%, #1c8e3a 100%);
+        box-shadow:
+          0 0 2px rgba(51,211,93,.42),
+          inset 0 1px 0 rgba(255,255,255,.22),
+          inset 0 -1px 0 rgba(0,0,0,.35);
+      }
+
+      .sfp-top-led.off {
+        background: #868b93;
+        box-shadow: inset 0 -1px 0 rgba(0,0,0,.2);
+      }
+
+      .port-sfp {
+        position: relative;
+        width: calc(var(--udc-port-size) - 2px);
+        height: var(--udc-port-size);
+        z-index: 0;
+      }
+
+      .sfp-frame {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, #7d828a 0%, #62676f 100%);
+        border: 1px solid #6d7279;
+        border-radius: 1px;
+      }
+
+      .sfp-rail {
+        position: absolute;
+        left: 3px;
+        right: 3px;
+        height: 1px;
+        background: rgba(230,235,240,.28);
+        z-index: 3;
+      }
+
+      .sfp-rail.top {
+        top: 5px;
+      }
+
+      .sfp-rail.bottom {
+        bottom: 5px;
+      }
+
+      .sfp-slot {
+        position: absolute;
+        left: 3px;
+        right: 3px;
+        top: 5px;
+        bottom: 5px;
+        background: linear-gradient(180deg, #171b22 0%, #060709 100%);
+        border: 1px solid rgba(220,225,230,.10);
+        z-index: 1;
+      }
+
+      .sfp-inner {
+        position: absolute;
+        left: 6px;
+        right: 6px;
+        top: 9px;
+        bottom: 9px;
+        background: rgba(130,140,155,.16);
+        z-index: 2;
+      }
+
+      .sfp-latch {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        bottom: 2px;
+        height: 4px;
+        background: rgba(210,214,220,.48);
+        z-index: 4;
+      }
+
+      .port.special {
+        min-width: calc(var(--udc-port-size) - 2px);
+        max-width: calc(var(--udc-port-size) - 2px);
+      }
+
+      .port.special .port-num {
+        color: var(--udc-special-port-label-color, var(--udc-port-label-color, #646a76));
+      }
+
+      .port-num {
+        font-size: 7px;
+        font-weight: 800;
+        line-height: 1;
+        margin-top: 1px;
+        letter-spacing: 0;
+        user-select: none;
+        color: var(--udc-port-label-color, #646a76);
+        transition: color .15s ease, opacity .15s ease;
+      }
+
+      .port.down .port-num {
+        color: var(--udc-port-label-color, #4c5260);
+        opacity: .6;
+      }
+
+      .port.special.down .port-num {
+        color: var(--udc-special-port-label-color, var(--udc-port-label-color, #4c5260));
+      }
+
+      .port.up .port-num {
+        color: var(--udc-port-label-color, #414957);
+        opacity: 1;
+      }
+
+      .port.special.up .port-num {
+        color: var(--udc-special-port-label-color, var(--udc-port-label-color, #414957));
+      }
+
+      .port:hover .port-num,
+      .port.selected .port-num {
+        opacity: 1;
+      }
+
+      .port.is-sfp .port-num {
+        font-size: 6px;
+      }
+
+      .port-meta {
+        display: grid;
+        width: 100%;
+        min-height: 13px;
+        margin-top: 1px;
+        gap: 1px;
+        font-size: 5.5px;
+        font-weight: 750;
+        line-height: 1;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+        user-select: none;
+        transition: opacity .15s ease;
+      }
+
+      .port-speed {
+        color: var(--udc-port-label-color, #414957);
+      }
+
+      .port-vlan {
+        color: color-mix(in srgb, var(--udc-accent) 72%, var(--udc-port-label-color, #414957));
+      }
+
+      .port-client {
+        width: 100%;
+        min-height: 7px;
+        margin-top: 1px;
+        overflow: hidden;
+        color: var(--udc-port-label-color, #414957);
+        font-size: 5.5px;
+        font-weight: 650;
+        line-height: 1.05;
+        text-align: center;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        user-select: none;
+      }
+
+      .port.down .port-speed {
+        opacity: .3;
+      }
+
+      .port.down .port-vlan {
+        opacity: .72;
+      }
+
+      .port.down .port-client {
+        opacity: .45;
+      }
+
+      .port:hover .port-meta,
+      .port.selected .port-meta {
+        opacity: 1;
+      }
+
+      .port.is-sfp .port-meta {
+        font-size: 5px;
+      }
+
+      .section {
+        padding: 14px;
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--udc-chrome-bg, transparent) 96%, var(--primary-text-color, #fff) 4%), var(--udc-chrome-bg, transparent));
+        position: relative;
+        z-index: 1;
+      }
+
+      .detail-title {
+        font-size: 0.86rem;
+        font-weight: 750;
+        margin-bottom: 10px;
+        color: var(--udc-special-port-label-color, var(--primary-text-color, var(--udc-text)));
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .detail-item {
+        display: grid;
+        align-content: center;
+        gap: 3px;
+        min-width: 0;
+        padding: 9px 10px;
+        border: 1px solid var(--udc-border);
+        border-radius: 11px;
+        background: color-mix(in srgb, var(--udc-chrome-bg, var(--card-background-color)) 91%, var(--primary-text-color, #fff) 9%);
+        box-shadow: inset 0 1px 0 color-mix(in srgb, var(--primary-text-color, #fff) 6%, transparent);
+      }
+
+      .detail-label {
+        font-size: 0.67rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--udc-label-color, var(--secondary-text-color, var(--udc-muted)));
+      }
+
+      .detail-value {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--udc-value-color, var(--primary-text-color, var(--udc-text)));
+        min-width: 0;
+        overflow-wrap: anywhere;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .detail-value.online { color: var(--udc-green); }
+      .detail-value.offline { color: var(--udc-muted); }
+      .detail-value.pending { color: var(--warning-color, #946b00); }
+
+      .mesh-signal {
+        display: grid;
+        gap: 7px;
+        margin-top: 4px;
+        padding: 11px 10px 9px;
+        border: 1px solid var(--udc-border);
+        border-radius: 11px;
+        background: color-mix(in srgb, var(--udc-chrome-bg, var(--card-background-color)) 91%, var(--primary-text-color, #fff) 9%);
+      }
+
+      .mesh-signal-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .mesh-signal-value {
+        font-size: 0.85rem;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .mesh-signal-value.excellent,
+      .mesh-signal-value.good { color: var(--udc-green); }
+      .mesh-signal-value.fair { color: var(--warning-color, #817400); }
+      .mesh-signal-value.weak { color: var(--udc-orange); }
+
+      .mesh-signal-track {
+        height: 10px;
+        border-radius: 999px;
+        position: relative;
+        background: linear-gradient(90deg, var(--udc-orange) 0%, #bba900 38%, #65a53a 70%, var(--udc-green) 100%);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+      }
+
+      .mesh-signal-marker {
+        position: absolute;
+        left: var(--mesh-signal-position);
+        top: 50%;
+        width: 15px;
+        height: 15px;
+        border: 3px solid var(--primary-text-color, #fff);
+        border-radius: 50%;
+        background: var(--udc-chrome-bg, var(--card-background-color));
+        box-shadow: 0 1px 5px rgba(0,0,0,.35);
+        transform: translate(-50%, -50%);
+      }
+
+      .mesh-signal-scale {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        color: var(--udc-label-color, var(--secondary-text-color, var(--udc-muted)));
+        font-size: 0.65rem;
+      }
+
+      .mesh-signal-scale span { text-align: center; }
+      .mesh-signal-scale span:first-child { text-align: left; }
+      .mesh-signal-scale span:last-child { text-align: right; }
+
+      .wireless-clients {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .wireless-clients-title {
+        font-size: .69rem;
+        font-weight: 750;
+        letter-spacing: .055em;
+        text-transform: uppercase;
+        color: var(--udc-label-color, var(--secondary-text-color, var(--udc-muted)));
+      }
+
+      .wireless-band-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+        gap: 7px;
+      }
+
+      .wireless-band {
+        min-width: 0;
+        padding: 9px;
+        border: 1px solid color-mix(in srgb, var(--udc-accent) 24%, var(--udc-border));
+        border-radius: 11px;
+        background: color-mix(in srgb, var(--udc-accent) 7%, var(--udc-chrome-bg, var(--card-background-color)));
+      }
+
+      .wireless-band.unknown {
+        border-color: var(--udc-border);
+        background: color-mix(in srgb, var(--udc-chrome-bg, var(--card-background-color)) 93%, var(--primary-text-color, #fff) 7%);
+      }
+
+      .wireless-band-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 7px;
+        color: var(--udc-value-color, var(--primary-text-color, var(--udc-text)));
+        font-size: .72rem;
+        font-weight: 700;
+      }
+
+      .wireless-band-heading strong {
+        display: inline-grid;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 5px;
+        place-items: center;
+        border-radius: 999px;
+        color: color-mix(in srgb, var(--udc-accent) 82%, white 18%);
+        background: color-mix(in srgb, var(--udc-accent) 15%, transparent);
+        font-size: .67rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .wireless-client-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      .wireless-client-list span {
+        max-width: 100%;
+        overflow: hidden;
+        padding: 3px 6px;
+        border-radius: 6px;
+        color: var(--udc-value-color, var(--primary-text-color, var(--udc-text)));
+        background: color-mix(in srgb, var(--primary-text-color, #fff) 7%, transparent);
+        font-size: .64rem;
+        line-height: 1.2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .wireless-client-list .empty,
+      .wireless-client-list .missing {
+        color: var(--udc-label-color, var(--secondary-text-color, var(--udc-muted)));
+        background: transparent;
+      }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+
+      .action-btn {
+        font: inherit;
+        font-size: 0.8rem;
+        font-weight: 600;
+        min-height: 40px;
+        padding: 8px 15px;
+        border-radius: var(--udc-rsm);
+        border: none;
+        cursor: pointer;
+        transition: opacity .15s, filter .15s;
+      }
+
+      .action-btn:hover { opacity: .85; }
+      .action-btn:active { filter: brightness(.9); }
+
+      button.chip:focus-visible,
+      .action-btn:focus-visible {
+        outline: 3px solid color-mix(in srgb, var(--udc-accent) 82%, white 18%);
+        outline-offset: 2px;
+      }
+
+      .action-btn.primary {
+        background: var(--udc-button-bg, #0090d9);
+        color: var(--udc-button-text-color, #fff);
+      }
+
+      .action-btn.primary.dimmed {
+        opacity: .52;
+        filter: saturate(.6) brightness(.9);
+      }
+
+      .action-btn.secondary {
+        background: var(--udc-button-secondary-bg, var(--udc-surf2));
+        border: 1px solid var(--udc-button-border-color, var(--udc-border));
+        color: var(--udc-button-secondary-text-color, var(--primary-text-color, var(--udc-text)));
+      }
+
+      .muted {
+        color: var(--secondary-text-color, var(--udc-muted));
+        font-size: 0.82rem;
+      }
+
+      .empty-state,
+      .loading-state {
+        padding: 24px 18px;
+        color: var(--secondary-text-color, var(--udc-muted));
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid var(--udc-border);
+        border-top-color: #0090d9;
+        border-radius: 50%;
+        animation: spin .7s linear infinite;
+        flex-shrink: 0;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      @media (max-width: 420px) {
+        .integrated-port-section {
+          grid-template-columns: 1fr;
+        }
+
+        .frontpanel.integrated-ports {
+          border-right: none;
+          border-bottom: 1px solid var(--udc-border);
+        }
+
+        .ap-layout.has-integrated-ports:not(.compact) {
+          grid-template-columns: 1fr;
+        }
+
+        .ap-layout.compact {
+          grid-template-columns: 1fr;
+        }
+
+        .ap-layout.has-product-image.compact > .product-showcase.ap-product {
+          border-right: none;
+          border-bottom: 1px solid var(--udc-border);
+        }
+
+        .mesh-signal-heading {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .mesh-signal-scale span:nth-child(2),
+        .mesh-signal-scale span:nth-child(4) {
+          visibility: hidden;
+        }
+
+      }
+
+      @container unifi-device-card (max-width: 480px) {
+        .header {
+          padding: 15px 15px 13px;
+          flex-wrap: wrap;
+        }
+
+        .header-info {
+          flex-basis: min(220px, 100%);
+        }
+
+        .header-actions {
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+
+        .product-showcase {
+          margin: 10px 11px 0;
+        }
+
+        .product-showcase.product-portrait {
+          height: clamp(220px, 70cqi, 290px);
+        }
+
+        .ap-layout.compact,
+        .ap-layout.has-product-image.compact,
+        .integrated-port-section,
+        .ap-layout.has-integrated-ports:not(.compact) {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .ap-layout.has-product-image.compact > .product-showcase.ap-product {
+          min-height: 220px;
+          border-right: none;
+          border-bottom: 1px solid var(--udc-border);
+        }
+
+        .frontpanel.integrated-ports {
+          border-right: none;
+          border-bottom: 1px solid var(--udc-border);
+        }
+
+        .mesh-signal-heading {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .mesh-signal-value {
+          white-space: normal;
+        }
+
+        .mesh-signal-scale span:nth-child(2),
+        .mesh-signal-scale span:nth-child(4) {
+          visibility: hidden;
+        }
+
+        .section {
+          padding: 12px;
+        }
+      }
+
+      @container unifi-device-card (max-width: 340px) {
+        .detail-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .actions .action-btn {
+          flex: 1 1 100%;
+        }
+
+        .meta-row {
+          max-width: 100%;
+        }
+      }
+
+    </style>`;
+  }
+  _integratedPortsEnabled(ctx) {
+    return !!ctx?.layout?.supportsIntegratedPorts && this._deviceLayoutMode(ctx) === "combined";
+  }
+  _deviceLayoutMode(ctx = this._ctx) {
+    const supportsLayouts = !!ctx?.layout?.supportsHybridLayouts || !!ctx?.layout?.supportsIntegratedPorts;
+    if (!supportsLayouts) return ctx?.type === "access_point" ? "ap" : "network";
+    const configured = String(this._config?.device_layout || "").toLowerCase();
+    if (["combined", "network", "ap"].includes(configured)) return configured;
+    if (this._config?.integrated_ports === false) return "ap";
+    return "combined";
+  }
+  _renderPortDetail(selected, portClientIndex = null) {
+    if (!selected) return `<div class="muted">${this._escapeHtml(this._t("no_ports"))}</div>`;
+    const linkUp = this._isPortConnected(selected);
+    const linkText = linkUp ? "connected" : "no_link";
+    const speedText = getPortSpeedText(this._hass, selected);
+    const vlan = this._getPortVlan(selected);
+    const poeStatus = getPoeStatus(this._hass, selected);
+    const hasPoe = !!(selected.poe_switch_entity || selected.poe_power_entity || selected.power_cycle_entity);
+    const poeOn = poeStatus.active;
+    const poePower = selected.poe_power_entity ? formatState(this._hass, selected.poe_power_entity) : "\u2014";
+    const rxVal = selected.rx_entity ? formatState(this._hass, selected.rx_entity) : null;
+    const txVal = selected.tx_entity ? formatState(this._hass, selected.tx_entity) : null;
+    const clientInfo = this._getMergedPortClientInfo(selected, portClientIndex);
+    const clientRemainder = Math.max(0, (clientInfo?.count || 0) - (clientInfo?.names?.length || 0));
+    const clientValue = clientInfo?.names?.length ? `${clientInfo.names.join(", ")}${clientRemainder ? ` (+${clientRemainder})` : ""}` : clientInfo?.count ? String(clientInfo.count) : "";
+    const portTitle = selected.port_label || (selected.kind === "special" ? selected.label : `${this._t("port_label")} ${selected.label}`);
+    return `
+      <div class="detail-title">${this._escapeHtml(portTitle)}</div>
+      <div class="detail-grid">
+        <div class="detail-item">
+          <div class="detail-label">${this._escapeHtml(this._t("link_status"))}</div>
+          <div class="detail-value ${linkUp ? "online" : "offline"}">
+            ${this._escapeHtml(this._translateState(linkText) || (linkUp ? this._t("connected") : this._t("no_link")))}
+          </div>
+        </div>
+        <div class="detail-item">
+          <div class="detail-label">${this._escapeHtml(this._t("speed"))}</div>
+          <div class="detail-value">${this._escapeHtml(speedText || "\u2014")}</div>
+        </div>
+        ${vlan ? `
+        <div class="detail-item">
+          <div class="detail-label">${this._escapeHtml(this._t("vlan"))}</div>
+          <div class="detail-value">${this._escapeHtml(vlan.value)}</div>
+        </div>` : ""}
+        ${clientValue ? `
+        <div class="detail-item">
+          <div class="detail-label">${this._escapeHtml(this._t("clients"))}</div>
+          <div class="detail-value">${this._escapeHtml(clientValue)}</div>
+        </div>` : ""}
+        ${hasPoe ? `
+        <div class="detail-item">
+          <div class="detail-label">${this._escapeHtml(this._t("poe"))}</div>
+          <div class="detail-value ${poeOn ? "online" : "offline"}">
+            ${this._escapeHtml(poeOn ? this._t("state_on") : this._t("state_off"))}
+          </div>
+        </div>
+        <div class="detail-item">
+          <div class="detail-label">${this._escapeHtml(this._t("poe_power"))}</div>
+          <div class="detail-value">${this._escapeHtml(poePower || "\u2014")}</div>
+        </div>` : ""}
+        ${rxVal != null ? `
+        <div class="detail-item">
+          <div class="detail-label">RX</div>
+          <div class="detail-value">${this._escapeHtml(rxVal)}</div>
+        </div>` : ""}
+        ${txVal != null ? `
+        <div class="detail-item">
+          <div class="detail-label">TX</div>
+          <div class="detail-value">${this._escapeHtml(txVal)}</div>
+        </div>` : ""}
+      </div>
+      <div class="actions">
+        ${selected.port_switch_entity ? (() => {
+      const enabled = isOn(this._hass, selected.port_switch_entity);
+      const confirmDisableAttr = enabled ? ` data-confirm-disable="true" data-port-name="${this._escapeAttr(portTitle)}"` : "";
+      return `<button class="action-btn secondary" data-action="toggle-port" data-entity="${this._escapeAttr(selected.port_switch_entity)}"${confirmDisableAttr}>
+            ${this._escapeHtml(enabled ? this._t("port_disable") : this._t("port_enable"))}
+          </button>`;
+    })() : ""}
+        ${selected.poe_switch_entity ? `<button class="action-btn primary${poeOn ? "" : " dimmed"}" data-action="toggle-poe" data-entity="${this._escapeAttr(selected.poe_switch_entity)}">
+          \u26A1 ${this._escapeHtml(this._t("poe"))}
+        </button>` : ""}
+        ${selected.power_cycle_entity ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(selected.power_cycle_entity)}">
+          \u21BA ${this._escapeHtml(this._t("power_cycle"))}
+        </button>` : ""}
+      </div>`;
+  }
+  _renderIntegratedPortSection(ctx) {
+    if (!this._integratedPortsEnabled(ctx) || !ctx?.numberedPorts?.length) return "";
+    const { specials, numbered } = this._buildSlotData(ctx);
+    const allSlots = [...specials, ...numbered];
+    if (!allSlots.length) return "";
+    const selected = allSlots.find((p) => p.key === this._selectedKey) || (this._config?.dynamic_port_details === true ? null : allSlots[0]) || null;
+    const portClientIndex = this._buildPortClientIndex();
+    const rows = this._buildEffectiveRows(ctx, numbered);
+    const layoutRows = rows.map((rowPorts) => {
+      const items = rowPorts.map((portNumber) => numbered.find((p) => p.port === portNumber)).filter(Boolean).map((slot) => this._renderPortButton(slot, selected?.key, portClientIndex)).join("");
+      return items ? `<div class="port-row" style="--udc-cols: ${Math.max(1, rowPorts.length)};">${items}</div>` : "";
+    }).filter(Boolean).join("");
+    return `
+      <div class="integrated-port-section">
+        <div class="frontpanel integrated-ports theme-${this._safeClassToken(ctx?.layout?.theme || "white", "white")}">
+          <div class="panel-label">${this._escapeHtml(this._t("front_panel"))}</div>
+          ${layoutRows || `<div class="muted" style="padding:8px 0">${this._escapeHtml(this._t("no_ports"))}</div>`}
+        </div>
+        ${selected ? `<div class="section integrated-port-detail">${this._renderPortDetail(selected, portClientIndex)}</div>` : ""}
+      </div>`;
+  }
+  _attachPortActionHandlers(ctx) {
+    this.shadowRoot.querySelectorAll(".port").forEach((btn) => btn.addEventListener("click", () => this._selectKey(btn.dataset.key)));
+    this.shadowRoot.querySelector("[data-action='toggle-port']")?.addEventListener("click", (e) => {
+      const target = e.currentTarget;
+      if (target.dataset.confirmDisable === "true") {
+        const portName = target.dataset.portName || this._t("port_label");
+        const message = `${this._t("confirm_disable_port_title")}
+
+${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
+        if (!window.confirm(message)) return;
+      }
+      this._toggleEntity(target.dataset.entity);
+    });
+    this.shadowRoot.querySelector("[data-action='toggle-poe']")?.addEventListener("click", (e) => this._toggleEntity(e.currentTarget.dataset.entity));
+    this.shadowRoot.querySelector("[data-action='power-cycle']")?.addEventListener("click", (e) => this._pressButton(e.currentTarget.dataset.entity));
+    this.shadowRoot.querySelector("[data-action='reboot-device']")?.addEventListener("click", () => this._pressButton(ctx?.reboot_entity));
+  }
+  _renderPanelAndDetail() {
+    const layoutMode = this._deviceLayoutMode(this._ctx);
+    const renderApLayout = layoutMode !== "network" && (this._ctx?.type === "access_point" || this._ctx?.layout?.supportsHybridLayouts);
+    if (renderApLayout) {
+      this._renderedFittableColumns = this._maxFittableColumns();
+      this._syncUptimeRefreshTimer();
+      const online = this._isDeviceOnline();
+      const compactApView = this._apCompactViewEnabled();
+      const apStatusRaw = this._apStatusRaw(this._ctx?.ap_status_entity);
+      const apStatus = this._apStatusState(this._ctx?.ap_status_entity);
+      const apStatusClass = apStatusRaw === "connected" ? "online" : apStatusRaw === "disconnected" ? "offline" : "pending";
+      const uptime = this._apUptimeState(this._ctx?.uptime_entity);
+      const wirelessClients = this._buildWirelessClientData();
+      const clients = wirelessClients.hasTotal ? String(wirelessClients.total) : this._wholeNumberState(this._ctx?.clients_entity);
+      const apUplink = this._apUplinkText(this._ctx?.ap_uplink);
+      const apUplinkTooltip = this._apUplinkTooltip(this._ctx?.ap_uplink);
+      const { ledEntity, ledEnabled, ringColor } = this._apLedState();
+      const isFiveGBackup = this._ctx?.layout?.frontStyle === "ap-5g-backup";
+      const apFrontStyle = this._ctx?.layout?.apFrontStyle || this._ctx?.layout?.frontStyle;
+      const isInWallAp = apFrontStyle === "ap-in-wall";
+      const isU7Outdoor = apFrontStyle === "ap-u7-outdoor";
+      const shapedApStyles = /* @__PURE__ */ new Set([
+        "ap-mesh-column",
+        "ap-mesh-antenna",
+        "ap-ac-mesh",
+        "ap-mesh-pro",
+        "ap-outdoor-panel",
+        "ap-extender",
+        "ap-sector",
+        "ap-bridge",
+        "ap-device-bridge",
+        "ap-device-bridge-iot",
+        "ap-device-bridge-pro",
+        "ap-device-bridge-sector",
+        "ap-building-bridge",
+        "ap-e7",
+        "ap-e7-audience",
+        "ap-basestation"
+      ]);
+      const renderedApStyle = isFiveGBackup || isInWallAp || isU7Outdoor || shapedApStyles.has(apFrontStyle) ? apFrontStyle : "ap-disc";
+      const usesApEdgeGlow = !!this._ctx?.layout?.apEdgeGlow;
+      const fiveGDisplay = isFiveGBackup ? this._fiveGBackupDisplayData(uptime) : null;
+      const headerTitle2 = this._title();
+      const headerMetrics2 = compactApView && !this._apCompactHeaderTelemetryEnabled() ? [] : this._headerMetrics();
+      const escapedHeaderTitle2 = this._escapeHtml(headerTitle2);
+      const escapedSubtitle2 = this._escapeHtml(this._subtitle());
+      const productImageHtml = this._renderProductImage("ap");
+      this.shadowRoot.innerHTML = `${this._styles()}
+        <ha-card class="ap-card ${compactApView ? "compact" : ""}" style="--udc-card-bg: ${this._cardBgStyle()}; --udc-chrome-bg: ${this._cardChromeBgStyle()}; --ap-ring-color: ${ringColor}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+          <div class="header">
+            <div class="header-info">
+              ${headerTitle2 ? `<div class="title">${escapedHeaderTitle2}</div>` : ""}
+              <div class="subtitle device-link" data-action="open-device" role="link" tabindex="0">${escapedSubtitle2}</div>
+              ${headerMetrics2.length ? `<div class="meta-list">${headerMetrics2.map((item) => `
+                <div class="meta-row">
+                  <div class="meta-label">${this._escapeHtml(item.label)}:</div>
+                  <div class="meta-value">${this._escapeHtml(item.value)}</div>
+                </div>`).join("")}</div>` : ""}
+            </div>
+            <div class="header-actions">
+              ${this._ctx?.reboot_entity ? `<button class="chip compact" data-action="reboot-device">\u21BB ${this._escapeHtml(this._t("reboot"))}</button>` : ""}
+              ${ledEntity ? `<button class="chip compact" data-action="toggle-led" style="--led-indicator: ${ledEnabled ? ringColor : "#868b93"}"><span class="led-indicator"></span>LED</button>` : ""}
+            </div>
+          </div>
+
+          <div class="ap-layout ${compactApView ? "compact" : ""}${this._integratedPortsEnabled(this._ctx) && this._ctx?.numberedPorts?.length ? " has-integrated-ports" : ""}${productImageHtml ? " has-product-image" : ""}">
+            ${productImageHtml || `
+            <div class="frontpanel ${renderedApStyle}">
+              ${isFiveGBackup ? `
+              <div class="ap-device ap-5g-device">
+                <div class="ap-5g-face"></div>
+                <div class="ap-5g-display">
+                  <div class="ap-5g-display-top">5G</div>
+                  <div class="ap-5g-bars">${[1, 2, 3, 4, 5].map((bar) => `<span class="${bar <= 4 ? "" : "inactive"}"></span>`).join("")}</div>
+                  <div class="ap-5g-uptime">
+                    <span>${this._escapeHtml(`${this._t("uptime")}:`)}</span>
+                    <span class="ap-5g-uptime-value">${this._escapeHtml(fiveGDisplay.uptime)}</span>
+                  </div>
+                  <div class="ap-5g-metrics">
+                    <div class="ap-5g-metric"><span>CPU</span><div class="ap-5g-meter"><span style="--ap-5g-meter-value: ${this._escapeAttr(`${fiveGDisplay.cpuBar}%`)}"></span></div></div>
+                    <div class="ap-5g-metric"><span>RAM</span><div class="ap-5g-meter memory"><span style="--ap-5g-meter-value: ${this._escapeAttr(`${fiveGDisplay.memoryBar}%`)}"></span></div></div>
+                  </div>
+                </div>
+                <div class="ap-5g-label">UniFi 5G</div>
+              </div>` : isInWallAp ? `
+              <div class="ap-device ap-in-wall-device">
+                <div class="ap-in-wall-led ${ledEnabled ? "" : "off"}"></div>
+                <div class="ap-in-wall-logo">U</div>
+              </div>` : isU7Outdoor ? `
+              <div class="ap-device ap-u7-outdoor-device">
+                <div class="ap-u7-outdoor-logo">U</div>
+                <div class="ap-u7-outdoor-led ${ledEnabled ? "" : "off"}"></div>
+              </div>` : shapedApStyles.has(apFrontStyle) ? `
+              <div class="ap-device ap-shaped-device ${apFrontStyle}-device${usesApEdgeGlow ? " edge-glow" : ""}${ledEnabled ? "" : " off"}">
+                <div class="ap-shaped-logo">U</div>
+                <div class="ap-shaped-led ${ledEnabled ? "" : "off"}"></div>
+              </div>` : `
+              <div class="ap-device">
+                <div class="ap-ring ${ledEnabled ? "online" : "off"}">
+                  <div class="ap-logo">u</div>
+                </div>
+              </div>`}
+            </div>`}
+
+            <div class="section">
+              <div class="detail-grid">
+                <div class="detail-item">
+                  <div class="detail-label">${this._escapeHtml(this._t("ap_status"))}</div>
+                  <div class="detail-value ${apStatusClass}">${this._escapeHtml(apStatus || (online ? this._t("state_connected") : this._t("state_disconnected")))}</div>
+                </div>
+                ${compactApView ? `
+                <div class="detail-item">
+                  <div class="detail-label">${this._escapeHtml(this._t("wlan_clients"))}</div>
+                  <div class="detail-value">${this._escapeHtml(clients)}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">${this._escapeHtml(this._t("uptime"))}</div>
+                  <div class="detail-value">${this._escapeHtml(uptime)}</div>
+                </div>` : `
+                <div class="detail-item">
+                  <div class="detail-label">${this._escapeHtml(this._t("uptime"))}</div>
+                  <div class="detail-value">${this._escapeHtml(uptime)}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">${this._escapeHtml(this._t("wlan_clients"))}</div>
+                  <div class="detail-value">${this._escapeHtml(clients)}</div>
+                </div>`}
+                ${apUplink ? `
+                <div class="detail-item">
+                  <div class="detail-label">${this._escapeHtml(this._t("uplink"))}</div>
+                  <div class="detail-value" title="${this._escapeAttr(apUplinkTooltip)}">${this._escapeHtml(apUplink)}</div>
+                </div>` : ""}
+              </div>
+              ${this._renderMeshSignal()}
+              ${this._renderWirelessClientBands(wirelessClients)}
+            </div>
+          </div>
+
+          ${this._renderIntegratedPortSection(this._ctx)}
+        </ha-card>`;
+      this._attachPortActionHandlers(this._ctx);
+      this._attachDeviceLinkHandler();
+      this._attachProductImageHandler();
+      this.shadowRoot.querySelector("[data-action='toggle-led']")?.addEventListener("click", () => this._toggleEntity(ledEntity));
+      return;
+    }
+    const ctx = this._ctx;
+    const slotData = this._buildSlotData(ctx);
+    const { specials: allSpecials, numbered: normalizedNumbered } = this._applySpecialPortSelection(
+      slotData.specials,
+      slotData.numbered
+    );
+    const allSlots = [...allSpecials, ...normalizedNumbered];
+    const selected = allSlots.find((p) => p.key === this._selectedKey) || (this._config?.dynamic_port_details === true ? null : allSlots[0]) || null;
+    const connected = this._connectedCount(allSlots);
+    const layoutTheme = ctx?.layout?.theme;
+    const theme = this._safeClassToken(layoutTheme || "dark", "dark");
+    const frontStyle = this._safeClassToken(ctx?.layout?.frontStyle || "single-row", "single-row");
+    const showPanel = this._config?.show_panel !== false && !!layoutTheme;
+    const specialPortsInUse = new Set(
+      allSpecials.map((slot) => slot?.port).filter((port) => Number.isInteger(port))
+    );
+    const visibleNumbered = normalizedNumbered.filter((slot) => !specialPortsInUse.has(slot.port));
+    const reverseFrontpanel = this._rotate180Enabled(ctx);
+    const portClientIndex = this._buildPortClientIndex();
+    const oddEvenRows = this._shouldUseOddEvenRows(ctx, visibleNumbered);
+    const baseRowsRaw = this._buildEffectiveRows(ctx, visibleNumbered);
+    const baseRows = oddEvenRows ? this._applyOddEvenRows(baseRowsRaw) : baseRowsRaw;
+    const effectiveRows = reverseFrontpanel ? baseRows.map((row) => [...row].reverse()).reverse() : baseRows;
+    const renderedSpecials = reverseFrontpanel ? [...allSpecials].reverse() : allSpecials;
+    const sideSpecials = /* @__PURE__ */ new Map();
+    const topSpecials = [];
+    for (const slot of renderedSpecials) {
+      const row = slot?.row;
+      if (!Number.isInteger(row)) {
+        topSpecials.push(slot);
+        continue;
+      }
+      const index = reverseFrontpanel ? effectiveRows.length - 1 - row : row;
+      if (index < 0 || index >= effectiveRows.length) {
+        topSpecials.push(slot);
+        continue;
+      }
+      if (!sideSpecials.has(index)) sideSpecials.set(index, []);
+      sideSpecials.get(index).push(slot);
+    }
+    const specialRow = topSpecials.length ? `<div class="special-row">${topSpecials.map((s) => this._renderPortButton(s, selected?.key, portClientIndex)).join("")}</div>` : "";
+    const layoutRows = effectiveRows.map((rowPorts, rowIndex) => {
+      const oddEvenTopRow = oddEvenRows && rowIndex % 2 === 0;
+      const items = rowPorts.map((portNumber) => visibleNumbered.find((p) => p.port === portNumber)).filter(Boolean).map((slot) => this._renderPortButton(slot, selected?.key, portClientIndex, oddEvenTopRow)).join("");
+      const sideItems = (sideSpecials.get(rowIndex) || []).map((slot) => this._renderPortButton(slot, selected?.key, portClientIndex, oddEvenTopRow)).join("");
+      const side = sideItems ? `<div class="port-row-side">${sideItems}</div>` : "";
+      const cols = Math.max(1, rowPorts.length);
+      return items || side ? `<div class="port-row" style="--udc-cols: ${cols};">${items}${side}</div>` : "";
+    }).filter(Boolean);
+    const panelRowsHtml = layoutRows.join("");
+    const panelPortsHtml = reverseFrontpanel ? `${panelRowsHtml}${specialRow}` : `${specialRow}${panelRowsHtml}`;
+    const panelContentHtml = panelPortsHtml || `<div class="muted" style="padding:8px 0">${this._escapeHtml(this._t("no_ports"))}</div>`;
+    let detail = `<div class="muted">${this._escapeHtml(this._t("no_ports"))}</div>`;
+    if (selected) {
+      const linkUp = this._isPortConnected(selected);
+      const linkText = linkUp ? "connected" : "no_link";
+      const speedText = getPortSpeedText(this._hass, selected);
+      const vlan = this._getPortVlan(selected);
+      const clientInfo = this._getMergedPortClientInfo(selected, portClientIndex);
+      const clientRemainder = Math.max(0, (clientInfo?.count || 0) - (clientInfo?.names?.length || 0));
+      const clientValue = clientInfo?.names?.length ? `${clientInfo.names.join(", ")}${clientRemainder ? ` (+${clientRemainder})` : ""}` : clientInfo?.count ? String(clientInfo.count) : "";
+      const poeStatus = getPoeStatus(this._hass, selected);
+      const hasPoe = !!(selected.poe_switch_entity || selected.poe_power_entity || selected.power_cycle_entity);
+      const poeOn = poeStatus.active;
+      const poePower = selected.poe_power_entity ? formatState(this._hass, selected.poe_power_entity) : "\u2014";
+      const rxVal = selected.rx_entity ? formatState(this._hass, selected.rx_entity) : null;
+      const txVal = selected.tx_entity ? formatState(this._hass, selected.tx_entity) : null;
+      const portTitle = selected.port_label || (selected.kind === "special" ? selected.label : `${this._t("port_label")} ${selected.label}`);
+      detail = `
+        <div class="detail-title">${this._escapeHtml(portTitle)}</div>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="detail-label">${this._escapeHtml(this._t("link_status"))}</div>
+            <div class="detail-value ${linkUp ? "online" : "offline"}">
+              ${this._escapeHtml(this._translateState(linkText) || (linkUp ? this._t("connected") : this._t("no_link")))}
+            </div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">${this._escapeHtml(this._t("speed"))}</div>
+            <div class="detail-value">${this._escapeHtml(speedText || "\u2014")}</div>
+          </div>
+          ${vlan ? `
+          <div class="detail-item">
+            <div class="detail-label">${this._escapeHtml(this._t("vlan"))}</div>
+            <div class="detail-value">${this._escapeHtml(vlan.value)}</div>
+          </div>` : ""}
+          ${clientValue ? `
+          <div class="detail-item">
+            <div class="detail-label">${this._escapeHtml(this._t("clients"))}</div>
+            <div class="detail-value">${this._escapeHtml(clientValue)}</div>
+          </div>` : ""}
+          ${hasPoe ? `
+          <div class="detail-item">
+            <div class="detail-label">${this._escapeHtml(this._t("poe"))}</div>
+            <div class="detail-value ${poeOn ? "online" : "offline"}">
+              ${this._escapeHtml(poeOn ? this._t("state_on") : this._t("state_off"))}
+            </div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">${this._escapeHtml(this._t("poe_power"))}</div>
+            <div class="detail-value">${this._escapeHtml(poePower || "\u2014")}</div>
+          </div>` : ""}
+          ${rxVal != null ? `
+          <div class="detail-item">
+            <div class="detail-label">RX</div>
+            <div class="detail-value">${this._escapeHtml(rxVal)}</div>
+          </div>` : ""}
+          ${txVal != null ? `
+          <div class="detail-item">
+            <div class="detail-label">TX</div>
+            <div class="detail-value">${this._escapeHtml(txVal)}</div>
+          </div>` : ""}
+        </div>
+        <div class="actions">
+          ${selected.port_switch_entity ? (() => {
+        const enabled = isOn(this._hass, selected.port_switch_entity);
+        const confirmDisableAttr = enabled ? ` data-confirm-disable="true" data-port-name="${this._escapeAttr(portTitle)}"` : "";
+        return `<button class="action-btn secondary" data-action="toggle-port" data-entity="${this._escapeAttr(selected.port_switch_entity)}"${confirmDisableAttr}>
+              ${this._escapeHtml(enabled ? this._t("port_disable") : this._t("port_enable"))}
+            </button>`;
+      })() : ""}
+          ${selected.poe_switch_entity ? `<button class="action-btn primary${poeOn ? "" : " dimmed"}" data-action="toggle-poe" data-entity="${this._escapeAttr(selected.poe_switch_entity)}">
+            \u26A1 ${this._escapeHtml(this._t("poe"))}
+          </button>` : ""}
+          ${selected.power_cycle_entity ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(selected.power_cycle_entity)}">
+            \u21BA ${this._escapeHtml(this._t("power_cycle"))}
+          </button>` : ""}
+        </div>`;
+    }
+    const integratedWirelessClients = ctx?.layout?.supportsIntegratedWifi ? this._buildWirelessClientData() : null;
+    const wirelessClientSection = integratedWirelessClients?.hasTotal ? `
+      <div class="section wireless-client-section">
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="detail-label">${this._escapeHtml(this._t("wlan_clients"))}</div>
+            <div class="detail-value">${this._escapeHtml(integratedWirelessClients.total)}</div>
+          </div>
+        </div>
+        ${this._renderWirelessClientBands(integratedWirelessClients)}
+      </div>` : "";
+    const headerTitle = this._title();
+    const headerMetrics = this._headerMetrics();
+    const escapedHeaderTitle = this._escapeHtml(headerTitle);
+    const escapedSubtitle = this._escapeHtml(this._subtitle());
+    this.shadowRoot.innerHTML = `${this._styles()}
+      <ha-card style="--udc-card-bg: ${this._cardBgStyle()}; --udc-chrome-bg: ${this._cardChromeBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+        <div class="header">
+          <div class="header-info">
+            ${headerTitle ? `<div class="title">${escapedHeaderTitle}</div>` : ""}
+            <div class="subtitle device-link" data-action="open-device" role="link" tabindex="0">${escapedSubtitle}</div>
+            ${headerMetrics.length ? `<div class="meta-list">${headerMetrics.map((item) => `
+              <div class="meta-row">
+                <div class="meta-label">${this._escapeHtml(item.label)}:</div>
+                <div class="meta-value">${this._escapeHtml(item.value)}</div>
+              </div>`).join("")}</div>` : ""}
+          </div>
+          <div class="header-actions">
+            ${ctx?.reboot_entity ? `<button class="chip compact" data-action="reboot-device">\u21BB ${this._escapeHtml(this._t("reboot"))}</button>` : ""}
+            <div class="chip connection-chip ${connected > 0 ? "active" : "idle"}" role="status"><div class="dot"></div>${this._escapeHtml(`${connected}/${allSlots.length}`)}</div>
+          </div>
+        </div>
+
+        ${this._renderProductImage("network")}
+
+        <div class="frontpanel ${frontStyle} theme-${theme}${showPanel ? "" : " no-panel-bg"}${reverseFrontpanel ? " rotate180-enabled" : ""}">
+          <div class="panel-label">${this._escapeHtml(this._t("front_panel"))}</div>
+          ${panelContentHtml}
+        </div>
+
+        ${selected || this._config?.dynamic_port_details !== true ? `<div class="section">${detail}</div>` : ""}
+        ${wirelessClientSection}
+      </ha-card>`;
+    this.shadowRoot.querySelectorAll(".port").forEach((btn) => btn.addEventListener("click", () => this._selectKey(btn.dataset.key)));
+    this._attachDeviceLinkHandler();
+    this._attachProductImageHandler();
+    this.shadowRoot.querySelector("[data-action='toggle-port']")?.addEventListener("click", (e) => {
+      const target = e.currentTarget;
+      if (target.dataset.confirmDisable === "true") {
+        const portName = target.dataset.portName || this._t("port_label");
+        const message = `${this._t("confirm_disable_port_title")}
+
+${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
+        if (!window.confirm(message)) return;
+      }
+      this._toggleEntity(target.dataset.entity);
+    });
+    this.shadowRoot.querySelector("[data-action='toggle-poe']")?.addEventListener("click", (e) => this._toggleEntity(e.currentTarget.dataset.entity));
+    this.shadowRoot.querySelector("[data-action='power-cycle']")?.addEventListener("click", (e) => this._pressButton(e.currentTarget.dataset.entity));
+    this.shadowRoot.querySelector("[data-action='reboot-device']")?.addEventListener("click", () => this._pressButton(ctx?.reboot_entity));
+  }
+  _render() {
+    const title = this._title();
+    const escapedTitle = this._escapeHtml(title);
+    const escapedSubtitle = this._escapeHtml(this._subtitle());
+    if (!this._config?.device_id) {
+      this.shadowRoot.innerHTML = `${this._styles()}
+        <ha-card style="--udc-card-bg: ${this._cardBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+          <div class="header">
+            <div class="header-info">
+              ${title ? `<div class="title">${escapedTitle}</div>` : ""}
+              <div class="subtitle">${escapedSubtitle}</div>
+            </div>
+          </div>
+          <div class="empty-state">${this._escapeHtml(this._t("select_device"))}</div>
+        </ha-card>`;
+      this._finalizeRender();
+      return;
+    }
+    if (this._loading) {
+      this.shadowRoot.innerHTML = `${this._styles()}
+        <ha-card style="--udc-card-bg: ${this._cardBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+          <div class="header">
+            <div class="header-info">
+              ${title ? `<div class="title">${escapedTitle}</div>` : ""}
+              <div class="subtitle">${escapedSubtitle}</div>
+            </div>
+          </div>
+          <div class="loading-state"><div class="spinner"></div>${this._escapeHtml(this._t("loading"))}</div>
+        </ha-card>`;
+      this._finalizeRender();
+      return;
+    }
+    if (!this._ctx) {
+      this.shadowRoot.innerHTML = `${this._styles()}
+        <ha-card style="--udc-card-bg: ${this._cardBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+          <div class="header">
+            <div class="header-info">
+              ${title ? `<div class="title">${escapedTitle}</div>` : ""}
+              <div class="subtitle">${escapedSubtitle}</div>
+            </div>
+          </div>
+          <div class="empty-state">${this._escapeHtml(this._t("no_data"))}</div>
+        </ha-card>`;
+      this._finalizeRender();
+      return;
+    }
+    this._renderPanelAndDetail();
+    this._finalizeRender();
+  }
+};
+if (!customElements.get("unifi-device-card")) {
+  customElements.define("unifi-device-card", UnifiDeviceCard);
+}
+function getFrontendRegistryItem(collection, key) {
+  if (!collection || !key) return null;
+  if (typeof collection.get === "function") return collection.get(key) || null;
+  if (Array.isArray(collection)) {
+    return collection.find((item) => item?.entity_id === key || item?.id === key) || null;
+  }
+  return collection[key] || null;
+}
+function getEntitySuggestionDeviceId(hass, entityId) {
+  const registryEntity = getFrontendRegistryItem(hass?.entities, entityId) || getFrontendRegistryItem(hass?.entityRegistry, entityId) || getFrontendRegistryItem(hass?.entity_registry, entityId);
+  const deviceId = registryEntity?.device_id || null;
+  if (!deviceId) return null;
+  const devices = hass?.devices || hass?.deviceRegistry || hass?.device_registry;
+  if (!devices) return deviceId;
+  const registryDevice = getFrontendRegistryItem(devices, deviceId);
+  return registryDevice ? deviceId : null;
+}
+function getUnifiDeviceCardEntitySuggestion(hass, entityId) {
+  const id = String(entityId || "").trim().toLowerCase();
+  if (!id || !id.includes(".")) return null;
+  const obj = hass?.states?.[entityId];
+  const attrs = obj?.attributes || {};
+  const friendly = String(attrs.friendly_name || "").toLowerCase();
+  const attribution = String(attrs.attribution || "").toLowerCase();
+  const hasUnifiHint = id.includes("unifi") || id.includes("ubiquiti") || friendly.includes("unifi") || friendly.includes("ubiquiti") || attribution.includes("unifi") || attribution.includes("ubiquiti");
+  const hasUniFiPrefix = /^(sensor|switch|button|binary_sensor|number|select|update|device_tracker)\.unifi_/i.test(id);
+  const hasUnifiPortPattern = /(?:^|[_-])(port(?:[_-]\d+)?|link[_-]speed|poe[_-]power|power[_-]cycle)(?:[_-]|$)/i.test(id);
+  if (!hasUniFiPrefix && !(hasUnifiHint && hasUnifiPortPattern)) return null;
+  const deviceId = getEntitySuggestionDeviceId(hass, entityId);
+  if (!deviceId) return null;
+  return {
+    type: "custom:unifi-device-card",
+    config: { type: "custom:unifi-device-card", device_id: deviceId }
+  };
+}
+window.customCards = window.customCards || [];
+if (!window.customCards.some((card) => card?.type === "unifi-device-card")) {
+  window.customCards.push({
+    type: "unifi-device-card",
+    name: "UniFi Device Card",
+    description: `Lovelace card for UniFi devices (v${VERSION}).`,
+    preview: true,
+    documentationURL: "https://github.com/bluenazgul/unifi-device-card",
+    getEntitySuggestion: getUnifiDeviceCardEntitySuggestion
+  });
+}
+if (!window[DEV_LOG_FLAG]) {
+  window[DEV_LOG_FLAG] = true;
+  console.log(
+    `%cUNIFI-DEVICE-CARD%c v${VERSION}`,
+    LOG_STYLES.badge,
+    LOG_STYLES.version
+  );
+}
