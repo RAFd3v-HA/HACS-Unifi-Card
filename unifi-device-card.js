@@ -3982,6 +3982,9 @@ var TRANSLATIONS = {
     without_band_data: "{count} without band data",
     speed: "Speed",
     vlan: "VLAN",
+    client_vlan: "Client VLAN",
+    unknown_client: "Unknown client",
+    backend_live_data: "Live data from UniFi backend",
     poe: "PoE",
     poe_power: "PoE Power",
     connected: "Connected",
@@ -4218,6 +4221,9 @@ var TRANSLATIONS = {
     without_band_data: "{count} ohne Banddaten",
     speed: "Geschwindigkeit",
     vlan: "VLAN",
+    client_vlan: "Client-VLAN",
+    unknown_client: "Unbekannter Client",
+    backend_live_data: "Live-Daten vom UniFi-Backend",
     poe: "PoE",
     poe_power: "PoE Leistung",
     connected: "Verbunden",
@@ -7136,6 +7142,9 @@ var VERSION = "0.8.4";
 var DEV_LOG_FLAG = "__UNIFI_DEVICE_CARD_VERSION_LOGGED__";
 var LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3, trace: 4 };
 var CONTEXT_REFRESH_INTERVAL = 31e3;
+var BACKEND_REFRESH_INTERVAL = 15e3;
+var BACKEND_RETRY_INTERVAL = 6e4;
+var BACKEND_WS_TYPE = "unifi_device_card/port_clients";
 var LOG_STYLES = {
   badge: "background:#00AEEF;color:#fff;padding:2px 6px;border-radius:2px;font-weight:700;",
   version: "background:#2a2a2a;color:#fff;padding:2px 6px;border-radius:2px;font-weight:700;",
@@ -7170,6 +7179,12 @@ var UnifiDeviceCard = class extends HTMLElement {
     this._instanceId = Math.random().toString(36).slice(2, 7);
     this._failedProductImageSrc = "";
     this._productImageView = "front";
+    this._backendData = null;
+    this._backendDeviceMac = "";
+    this._backendLoadedAt = 0;
+    this._backendLastAttemptAt = 0;
+    this._backendLoading = false;
+    this._backendSupported = null;
     this._sfpConnectedSeen = /* @__PURE__ */ new Set();
     this._handleEntityRegistryChanged = (event) => {
       if (event?.detail?.deviceId !== this._config?.device_id) return;
@@ -7328,6 +7343,7 @@ var UnifiDeviceCard = class extends HTMLElement {
     if (oldDeviceId !== newDeviceId || oldFakeMode !== newFakeMode) {
       ++this._loadToken;
       this._clearUptimeRefreshTimer();
+      this._resetBackendData();
       this._ctx = null;
       this._selectedKey = null;
       this._loadedDeviceId = null;
@@ -7345,11 +7361,60 @@ var UnifiDeviceCard = class extends HTMLElement {
     const previousAppearanceMode = this._resolvedAppearanceMode(previousHass);
     this._hass = hass;
     this._ensureLoaded();
+    this._ensureBackendData();
     this._log("trace", "hass update");
     const telemetrySelectionChanged = this._refreshTelemetrySelection(previousHass);
     const appearanceModeChanged = previousAppearanceMode !== this._resolvedAppearanceMode(hass);
     if (!previousHass || !this._ctx || telemetrySelectionChanged || appearanceModeChanged || this._hasRelevantStateChanges(previousHass, hass)) {
       this._render();
+    }
+  }
+  _resetBackendData() {
+    this._backendData = null;
+    this._backendDeviceMac = "";
+    this._backendLoadedAt = 0;
+    this._backendLastAttemptAt = 0;
+    this._backendLoading = false;
+    this._backendSupported = null;
+  }
+  async _ensureBackendData(force = false, render = true) {
+    if (!this._hass || !this._ctx || this._ctx?.fake_device === true) return;
+    const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
+    if (!deviceMac) return;
+    const now = Date.now();
+    const sameDevice = this._backendDeviceMac === deviceMac;
+    const refreshAge = now - this._backendLoadedAt;
+    const retryAge = now - this._backendLastAttemptAt;
+    if (!force && sameDevice && this._backendData && refreshAge < BACKEND_REFRESH_INTERVAL) return;
+    if (!force && this._backendSupported === false && retryAge < BACKEND_RETRY_INTERVAL) return;
+    if (this._backendLoading) return;
+    this._backendLoading = true;
+    this._backendLastAttemptAt = now;
+    try {
+      const response = await this._hass.callWS({
+        type: BACKEND_WS_TYPE,
+        device_mac: deviceMac
+      });
+      if (normalizeMac(this._ctx?.identity?.primary_mac) !== deviceMac) return;
+      this._backendData = response && typeof response === "object" ? response : null;
+      this._backendDeviceMac = deviceMac;
+      this._backendLoadedAt = Date.now();
+      this._backendSupported = true;
+      this._log("debug", "companion backend data loaded", {
+        available: response?.available === true,
+        ports: Array.isArray(response?.ports) ? response.ports.length : 0,
+        clients: Array.isArray(response?.clients) ? response.clients.length : 0
+      });
+    } catch (err) {
+      if (normalizeMac(this._ctx?.identity?.primary_mac) !== deviceMac) return;
+      this._backendData = null;
+      this._backendDeviceMac = deviceMac;
+      this._backendLoadedAt = Date.now();
+      this._backendSupported = false;
+      this._log("debug", "companion backend unavailable; using entity fallback", err);
+    } finally {
+      this._backendLoading = false;
+      if (render) this._render();
     }
   }
   _refreshTelemetrySelection(previousHass = null) {
@@ -7888,7 +7953,51 @@ var UnifiDeviceCard = class extends HTMLElement {
     const indexedNames = indexed?.names ? Array.from(indexed.names) : [];
     const names = Array.from(/* @__PURE__ */ new Set([...direct?.names || [], ...indexedNames])).slice(0, 8);
     const count = Math.max(direct?.count || 0, indexed?.count || 0, indexedNames.length, names.length);
-    return count > 0 || names.length > 0 ? { count, names } : null;
+    const clients = Array.isArray(indexed?.clients) ? indexed.clients.slice(0, 32) : [];
+    const vlans = indexed?.vlans ? Array.from(indexed.vlans) : [];
+    return count > 0 || names.length > 0 || clients.length > 0 ? { count, names, clients, vlans } : null;
+  }
+  _formatPortClientValue(clientInfo) {
+    if (!clientInfo) return "";
+    if (clientInfo.clients?.length) {
+      const rows = clientInfo.clients.slice(0, 8).map((client) => {
+        const details = [
+          client?.name || client?.hostname || client?.mac,
+          client?.ip,
+          client?.vlan != null ? `${this._t("vlan")} ${client.vlan}` : null
+        ].filter(Boolean);
+        return details.join(" \xB7 ");
+      });
+      const remainder2 = Math.max(0, (clientInfo.count || 0) - rows.length);
+      return `${rows.join("; ")}${remainder2 ? ` (+${remainder2})` : ""}`;
+    }
+    const remainder = Math.max(0, (clientInfo.count || 0) - (clientInfo.names?.length || 0));
+    if (clientInfo.names?.length) {
+      return `${clientInfo.names.join(", ")}${remainder ? ` (+${remainder})` : ""}`;
+    }
+    return clientInfo.count ? String(clientInfo.count) : "";
+  }
+  _backendPortInfo(slot, portClientIndex = null) {
+    if (!Number.isInteger(slot?.port)) return null;
+    return portClientIndex?.get(slot.port)?.port || null;
+  }
+  _formatBackendPortSpeed(speedMbit) {
+    const speed = Number(speedMbit);
+    if (!Number.isFinite(speed) || speed <= 0) return null;
+    if (speed >= 1e3) {
+      const gigabit = speed / 1e3;
+      return `${Number(gigabit.toFixed(gigabit >= 10 ? 0 : 1))} Gbit/s`;
+    }
+    return `${Number(speed.toFixed(speed >= 100 ? 0 : 1))} Mbit/s`;
+  }
+  _getPortSpeedText(slot, portClientIndex = null) {
+    const backendValue = this._formatBackendPortSpeed(
+      this._backendPortInfo(slot, portClientIndex)?.speed_mbps
+    );
+    if (backendValue) return backendValue;
+    const entityValue = getPortSpeedText(this._hass, slot);
+    if (entityValue && entityValue !== "\u2014") return entityValue;
+    return null;
   }
   _portStateCandidates(slot) {
     return Array.from(new Set([
@@ -7925,7 +8034,10 @@ var UnifiDeviceCard = class extends HTMLElement {
       compact: name.length <= 5 ? name : `${name.slice(0, 4)}\u2026`
     };
   }
-  _getPortVlan(slot) {
+  _getPortVlan(slot, portClientIndex = null) {
+    const indexed = Number.isInteger(slot?.port) ? portClientIndex?.get(slot.port) : null;
+    const backendVlan = this._normalizeVlanCandidate(indexed?.port?.native_vlan, true);
+    if (backendVlan) return { ...backendVlan, source: "port" };
     const vlanAttributeKeys = [
       "vlan",
       "vlan_id",
@@ -7942,7 +8054,7 @@ var UnifiDeviceCard = class extends HTMLElement {
       for (const key of vlanAttributeKeys) {
         if (!Object.prototype.hasOwnProperty.call(attrs, key)) continue;
         const vlan2 = this._normalizeVlanCandidate(attrs[key], true);
-        if (vlan2) return vlan2;
+        if (vlan2) return { ...vlan2, source: "port" };
       }
       const descriptor = [
         entityId,
@@ -7952,12 +8064,23 @@ var UnifiDeviceCard = class extends HTMLElement {
       ].filter(Boolean).join(" ").toLowerCase();
       if (!/(?:vlan|pvid|native[_\s-]*(?:network|vlan)|port[_\s-]*profile)/i.test(descriptor)) continue;
       const vlan = this._normalizeVlanCandidate(obj?.state, true);
-      if (vlan) return vlan;
+      if (vlan) return { ...vlan, source: "port" };
+    }
+    const clientVlans = Array.from(indexed?.vlans || []).map((value) => this._normalizeVlanCandidate(value, true)).filter(Boolean);
+    const unique = Array.from(new Map(clientVlans.map((vlan) => [vlan.value, vlan])).values());
+    if (unique.length === 1) return { ...unique[0], source: "client" };
+    if (unique.length > 1) {
+      return {
+        value: unique.map((vlan) => vlan.value).join(", "),
+        compact: `${unique[0].compact}+${unique.length - 1}`,
+        source: "client"
+      };
     }
     return null;
   }
-  _compactPortSpeed(slot) {
-    const speedMbit = parseLinkSpeedMbit(this._hass, slot?.speed_entity);
+  _compactPortSpeed(slot, portClientIndex = null) {
+    const backendSpeed = Number(this._backendPortInfo(slot, portClientIndex)?.speed_mbps);
+    const speedMbit = Number.isFinite(backendSpeed) && backendSpeed > 0 ? backendSpeed : parseLinkSpeedMbit(this._hass, slot?.speed_entity);
     if (!Number.isFinite(speedMbit) || speedMbit <= 0) return "";
     if (speedMbit >= 1e3) {
       const gigabit = speedMbit / 1e3;
@@ -8148,6 +8271,18 @@ var UnifiDeviceCard = class extends HTMLElement {
   }
   _buildWirelessClientData() {
     const byClient = /* @__PURE__ */ new Map();
+    const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
+    if (deviceMac && normalizeMac(this._backendData?.device_mac) === deviceMac && Array.isArray(this._backendData?.clients)) {
+      for (const client of this._backendData.clients) {
+        if (client?.is_wired === true) continue;
+        if (normalizeMac(client?.access_point_mac) !== deviceMac) continue;
+        const clientKey = normalizeMac(client?.mac) || `backend:${client?.name || byClient.size}`;
+        byClient.set(clientKey, {
+          name: String(client?.name || client?.hostname || client?.mac || this._t("unknown_client")),
+          band: ["2.4", "5", "6"].includes(String(client?.band)) ? String(client.band) : "unknown"
+        });
+      }
+    }
     for (const [entityId, obj] of Object.entries(this._hass?.states || {})) {
       if (!entityId.startsWith("device_tracker.")) continue;
       const attrs = obj?.attributes || {};
@@ -8216,17 +8351,50 @@ var UnifiDeviceCard = class extends HTMLElement {
   }
   _buildPortClientIndex() {
     const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
-    if (!deviceMac || !this._hass?.states) return /* @__PURE__ */ new Map();
+    if (!deviceMac) return /* @__PURE__ */ new Map();
     const byPort = /* @__PURE__ */ new Map();
-    for (const [entityId, obj] of Object.entries(this._hass.states)) {
+    const ensurePort2 = (port) => {
+      if (!byPort.has(port)) {
+        byPort.set(port, {
+          count: 0,
+          names: /* @__PURE__ */ new Set(),
+          clients: [],
+          vlans: /* @__PURE__ */ new Set(),
+          clientKeys: /* @__PURE__ */ new Set(),
+          port: null
+        });
+      }
+      return byPort.get(port);
+    };
+    if (normalizeMac(this._backendData?.device_mac) === deviceMac && this._backendData?.available === true) {
+      for (const backendPort of this._backendData?.ports || []) {
+        const port = Number.parseInt(backendPort?.port, 10);
+        if (!Number.isInteger(port) || port < 1) continue;
+        ensurePort2(port).port = backendPort;
+      }
+      for (const client of this._backendData?.clients || []) {
+        if (client?.is_wired !== true) continue;
+        if (normalizeMac(client?.switch_mac) !== deviceMac) continue;
+        const port = Number.parseInt(client?.switch_port, 10);
+        if (!Number.isInteger(port) || port < 1) continue;
+        const entry = ensurePort2(port);
+        const name = String(client?.name || client?.hostname || client?.mac || "").trim();
+        const key = normalizeMac(client?.mac) || name.toLowerCase();
+        if (key && !entry.clientKeys.has(key)) {
+          entry.clientKeys.add(key);
+          entry.clients.push(client);
+        }
+        if (name) entry.names.add(name);
+        if (client?.vlan != null && String(client.vlan).trim()) entry.vlans.add(client.vlan);
+        entry.count = Math.max(entry.count, entry.clients.length, entry.names.size);
+      }
+    }
+    for (const [entityId, obj] of Object.entries(this._hass?.states || {})) {
       const attrs = obj?.attributes || {};
       if (!this._matchesParentDevice(attrs, deviceMac)) continue;
       const port = this._extractPortFromAttributes(attrs, entityId);
       if (!Number.isInteger(port) || port < 1) continue;
-      if (!byPort.has(port)) {
-        byPort.set(port, { count: 0, names: /* @__PURE__ */ new Set() });
-      }
-      const entry = byPort.get(port);
+      const entry = ensurePort2(port);
       if (entityId.startsWith("device_tracker.")) {
         const name = this._extractClientNameFromStateObj(obj, entityId);
         if (name) entry.names.add(name);
@@ -8243,6 +8411,7 @@ var UnifiDeviceCard = class extends HTMLElement {
       }
       entry.count = Math.max(entry.count, entry.names.size);
     }
+    for (const entry of byPort.values()) delete entry.clientKeys;
     return byPort;
   }
   _buildSlotData(ctx) {
@@ -8535,6 +8704,7 @@ var UnifiDeviceCard = class extends HTMLElement {
       if (!selectedStillExists) {
         this._selectedKey = this._config?.dynamic_port_details === true ? null : available[0]?.key || null;
       }
+      await this._ensureBackendData(!refreshing, false);
     } catch (err) {
       this._log("error", "Failed to load device context", err);
       if (token !== this._loadToken) return;
@@ -8621,6 +8791,24 @@ var UnifiDeviceCard = class extends HTMLElement {
     }));
   }
   _meshSignalData() {
+    const backendMesh = this._backendData?.mesh;
+    if (normalizeMac(this._backendData?.device_mac) === normalizeMac(this._ctx?.identity?.primary_mac) && backendMesh?.is_mesh === true) {
+      const backendNumeric = Number(backendMesh?.signal_dbm);
+      if (Number.isFinite(backendNumeric) && backendNumeric >= -150 && backendNumeric <= 0) {
+        const level2 = backendNumeric >= -50 ? "excellent" : backendNumeric >= -60 ? "good" : backendNumeric >= -70 ? "fair" : "weak";
+        const position2 = (Math.min(-40, Math.max(-90, backendNumeric)) + 90) / 50 * 100;
+        return {
+          entityId: this._t("backend_live_data"),
+          value: backendNumeric,
+          min: -90,
+          max: -40,
+          display: `${Number(backendNumeric.toFixed(1))} dBm`,
+          position: Math.min(99, Math.max(1, position2)),
+          level: level2,
+          scale: [this._t("signal_weak"), "-75", "-60", "-45", this._t("signal_excellent")]
+        };
+      }
+    }
     if (this._ctx?.ap_uplink?.kind !== "mesh") return null;
     const entityId = String(
       this._config?.mesh_signal_entity || this._ctx?.mesh_signal_entity || ""
@@ -8699,6 +8887,7 @@ var UnifiDeviceCard = class extends HTMLElement {
   }
   _isPortStatusKnown(port, portClientIndex = null) {
     if (this._ctx?.fake_device === true) return true;
+    if (typeof this._backendPortInfo(port, portClientIndex)?.up === "boolean") return true;
     if (this._hasObservedPortClients(port, portClientIndex)) return true;
     if (this._hasUsablePortState(port?.link_entity)) return true;
     if (this._hasUsablePortState(port?.speed_entity)) return true;
@@ -8707,6 +8896,8 @@ var UnifiDeviceCard = class extends HTMLElement {
     return controlState === "off" || controlState === "false" || controlState === "0";
   }
   _isPortConnected(port, portClientIndex = null) {
+    const backendUp = this._backendPortInfo(port, portClientIndex)?.up;
+    if (typeof backendUp === "boolean") return backendUp;
     if (this._hasObservedPortClients(port, portClientIndex)) return true;
     const trustLowSpeedLink = this._config?.trust_link_speed_ports?.includes(port?.port) === true;
     if (isSfpLikePort(port)) {
@@ -8813,9 +9004,9 @@ var UnifiDeviceCard = class extends HTMLElement {
     const isWan = this._isWanLike(slot);
     const linkUp = this._isPortConnected(slot, portClientIndex);
     const linkKnown = this._isPortStatusKnown(slot, portClientIndex);
-    const speedText = linkUp ? getPortSpeedText(this._hass, slot) : null;
-    const compactSpeed = linkUp ? this._compactPortSpeed(slot) : "";
-    const vlan = this._getPortVlan(slot);
+    const speedText = linkUp ? this._getPortSpeedText(slot, portClientIndex) : null;
+    const compactSpeed = linkUp ? this._compactPortSpeed(slot, portClientIndex) : "";
+    const vlan = this._getPortVlan(slot, portClientIndex);
     const poeStatus = getPoeStatus(this._hass, slot);
     const poeOn = poeStatus.active;
     const clientInfo = this._getMergedPortClientInfo(slot, portClientIndex);
@@ -8826,7 +9017,7 @@ var UnifiDeviceCard = class extends HTMLElement {
       slot.port_label || (isSpecial ? slot.label : `${this._t("port_label")} ${slot.label}`),
       linkUp ? this._translateState("connected") : linkKnown ? this._translateState("no_link") : this._t("port_status_unknown"),
       speedText ? `${this._t("speed")}: ${speedText}` : null,
-      vlan ? `${this._t("vlan")}: ${vlan.value}` : null,
+      vlan ? `${this._t(vlan.source === "client" ? "client_vlan" : "vlan")}: ${vlan.value}` : null,
       poeOn ? `${this._t("poe")}${poeStatus.power ? ` ${poeStatus.power}` : " ON"}` : null,
       mergedCount > 0 ? `${this._t("clients")}: ${mergedCount}` : null,
       mergedNames.length ? mergedNames.join(", ") : null
@@ -11311,8 +11502,8 @@ var UnifiDeviceCard = class extends HTMLElement {
     const linkUp = this._isPortConnected(selected, portClientIndex);
     const linkKnown = this._isPortStatusKnown(selected, portClientIndex);
     const linkText = linkUp ? "connected" : linkKnown ? "no_link" : "port_status_unknown";
-    const speedText = getPortSpeedText(this._hass, selected);
-    const vlan = this._getPortVlan(selected);
+    const speedText = this._getPortSpeedText(selected, portClientIndex);
+    const vlan = this._getPortVlan(selected, portClientIndex);
     const poeStatus = getPoeStatus(this._hass, selected);
     const hasPoe = !!(selected.poe_switch_entity || selected.poe_power_entity || selected.power_cycle_entity);
     const poeOn = poeStatus.active;
@@ -11320,8 +11511,7 @@ var UnifiDeviceCard = class extends HTMLElement {
     const rxVal = selected.rx_entity ? formatState(this._hass, selected.rx_entity) : null;
     const txVal = selected.tx_entity ? formatState(this._hass, selected.tx_entity) : null;
     const clientInfo = this._getMergedPortClientInfo(selected, portClientIndex);
-    const clientRemainder = Math.max(0, (clientInfo?.count || 0) - (clientInfo?.names?.length || 0));
-    const clientValue = clientInfo?.names?.length ? `${clientInfo.names.join(", ")}${clientRemainder ? ` (+${clientRemainder})` : ""}` : clientInfo?.count ? String(clientInfo.count) : "";
+    const clientValue = this._formatPortClientValue(clientInfo);
     const portTitle = selected.port_label || (selected.kind === "special" ? selected.label : `${this._t("port_label")} ${selected.label}`);
     return `
       <div class="detail-title">${this._escapeHtml(portTitle)}</div>
@@ -11338,7 +11528,7 @@ var UnifiDeviceCard = class extends HTMLElement {
         </div>
         ${vlan ? `
         <div class="detail-item">
-          <div class="detail-label">${this._escapeHtml(this._t("vlan"))}</div>
+          <div class="detail-label">${this._escapeHtml(this._t(vlan.source === "client" ? "client_vlan" : "vlan"))}</div>
           <div class="detail-value">${this._escapeHtml(vlan.value)}</div>
         </div>` : ""}
         ${clientValue ? `
@@ -11611,11 +11801,10 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       const linkUp = this._isPortConnected(selected, portClientIndex);
       const linkKnown = this._isPortStatusKnown(selected, portClientIndex);
       const linkText = linkUp ? "connected" : linkKnown ? "no_link" : "port_status_unknown";
-      const speedText = getPortSpeedText(this._hass, selected);
-      const vlan = this._getPortVlan(selected);
+      const speedText = this._getPortSpeedText(selected, portClientIndex);
+      const vlan = this._getPortVlan(selected, portClientIndex);
       const clientInfo = this._getMergedPortClientInfo(selected, portClientIndex);
-      const clientRemainder = Math.max(0, (clientInfo?.count || 0) - (clientInfo?.names?.length || 0));
-      const clientValue = clientInfo?.names?.length ? `${clientInfo.names.join(", ")}${clientRemainder ? ` (+${clientRemainder})` : ""}` : clientInfo?.count ? String(clientInfo.count) : "";
+      const clientValue = this._formatPortClientValue(clientInfo);
       const poeStatus = getPoeStatus(this._hass, selected);
       const hasPoe = !!(selected.poe_switch_entity || selected.poe_power_entity || selected.power_cycle_entity);
       const poeOn = poeStatus.active;
@@ -11638,7 +11827,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           </div>
           ${vlan ? `
           <div class="detail-item">
-            <div class="detail-label">${this._escapeHtml(this._t("vlan"))}</div>
+            <div class="detail-label">${this._escapeHtml(this._t(vlan.source === "client" ? "client_vlan" : "vlan"))}</div>
             <div class="detail-value">${this._escapeHtml(vlan.value)}</div>
           </div>` : ""}
           ${clientValue ? `

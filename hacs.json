@@ -1,5 +1,4 @@
 {
   "name": "UniFi Device Card",
-  "filename": "unifi-device-card.js",
-  "render_readme": true
+  "filename": "unifi-device-card.js"
 }

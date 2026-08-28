@@ -3,6 +3,7 @@
 ## [v0.8.4]
 
 ### 🐛 Bug Fixes
+- Declare the dashboard bundle filename explicitly in `hacs.json`, so forks whose repository name differs from `unifi-device-card` still install the correct frontend resource through HACS.
 - Show a precise partial-status notice when only some ports have usable link telemetry, keep the header counter in the familiar `connected/total` format without a `≥` prefix, and explain the remaining uncertainty in its tooltip.
 - Stop reporting `0 / total` when Home Assistant exposes the hardware layout but no usable per-port link states. Unknown and partially observed status is now represented explicitly, hidden entities with live states remain usable, and connected-client evidence can mark a port active.
 - Recognize the Cloud Gateway Fiber hardware identifiers `UDMA6A8` and `UCGF` as `UCGFIBER`, restoring its official front/rear product artwork and seven-port hardware layout in Home Assistant.
@@ -11,6 +12,7 @@
 - Keep the USW Ultra, Ultra 60W, and Ultra 210W front panels identical by placing their shared RJ45 uplink beside ports 1–7; the variants differ by power adapter/PoE budget, not port arrangement.
 
 ### ✨ Improvements
+- Add optional companion-backend support that reuses Home Assistant's existing UniFi runtime to map wired clients to switch ports, expose client VLAN/IP/rate and authoritative port link/speed data, enrich WLAN band assignments, and supply mesh RSSI without storing another set of controller credentials; the previous entity-only behavior remains the automatic fallback.
 - Join the official product image and live front-panel ports into one inset hardware stage with shared borders, radii, lighting, and a softer visual transition.
 - Add an explicit editor action to enable disabled UniFi link-speed sensors in bounded batches and reload the affected UniFi config entry, so active ports can be detected without storing UniFi credentials in the Lovelace card.
 - Add opt-in exact official product views for 18 mapped UniFi Network models, including the requested switches, access points, and compact gateways; Cloud Gateway Fiber and Express 7 include accessible front/rear controls, Ultra 60W/210W share their identical chassis view, images are downscaled by Ubiquiti's CDN, and a local/custom URL can override the mapping.
