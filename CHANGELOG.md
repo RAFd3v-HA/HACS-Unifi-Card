@@ -3,17 +3,23 @@
 ## [v0.8.4]
 
 ### 🐛 Bug Fixes
+- Stop reporting `0 / total` when Home Assistant exposes the hardware layout but no usable per-port link states. Unknown and partially observed status is now represented explicitly, hidden entities with live states remain usable, and connected-client evidence can mark a port active.
+- Recognize the Cloud Gateway Fiber hardware identifiers `UDMA6A8` and `UCGF` as `UCGFIBER`, restoring its official front/rear product artwork and seven-port hardware layout in Home Assistant.
 - Recognize the `UACCMPOEAF` model identifier reported by the UniFi Network integration as a Device Bridge (`UDB`) instead of rendering it as a generic round access point, and expose its discovered Ethernet/PoE port controls.
 - Restore the port choices for the optional 10 Mbit/s link-speed trust setting when a device layout only reports its port count.
 - Keep the USW Ultra, Ultra 60W, and Ultra 210W front panels identical by placing their shared RJ45 uplink beside ports 1–7; the variants differ by power adapter/PoE budget, not port arrangement.
 
 ### ✨ Improvements
+- Join the official product image and live front-panel ports into one inset hardware stage with shared borders, radii, lighting, and a softer visual transition.
+- Add an explicit editor action to enable disabled UniFi link-speed sensors in bounded batches and reload the affected UniFi config entry, so active ports can be detected without storing UniFi credentials in the Lovelace card.
 - Add opt-in exact official product views for 18 mapped UniFi Network models, including the requested switches, access points, and compact gateways; Cloud Gateway Fiber and Express 7 include accessible front/rear controls, Ultra 60W/210W share their identical chassis view, images are downscaled by Ubiquiti's CDN, and a local/custom URL can override the mapping.
 - Refine the card into a responsive premium layout with theme-aware layered surfaces, compact telemetry pills, clearer detail tiles, improved focus states, and narrow-card adaptations.
+- Add `appearance_mode: auto|light|dark`: automatic follows the active Home Assistant theme, while light and dark can be forced per card; product stages, hardware panels, labels, and notices use coordinated palettes.
 - Add optional mesh signal telemetry for access points, including automatic RSSI sensor discovery, an editor-selectable `mesh_signal_entity`, dBm/percent normalization, and a color-coded signal quality scale.
 - Show mesh signal telemetry only while the AP has a confirmed wireless mesh uplink; selecting a signal sensor no longer makes a wired AP look meshed.
 - Show compact link speed, VLAN, and the connected client directly below each front-panel port; full VLAN values and all detected client names are also available in the selected-port details.
 - Label wireless totals as WLAN clients and group matched UniFi client trackers by 2.4, 5, and 6 GHz with device names on APs and Wi-Fi-capable gateways such as Express/Express 7; clients without reliable band data remain explicitly unclassified.
+- Present WLAN totals and 2.4/5/6 GHz client groups as one port-inspired radio hardware panel with per-band status LEDs instead of separate statistic tiles.
 - Make the 10 Mbit/s link-speed trust port selector collapsible so large devices no longer fill the card editor with port buttons by default.
 - Add an optional, collapsible editor setting for purely visual connected-port LED blinking with a configurable interval and no effect on link detection or controls.
 - Allow RJ45 and SFP link LEDs to be enabled independently and use separate sliders from 1 to 10 blinks per second (default 5); disabling both also disables the main blink option, while the shared legacy speed setting remains supported.

@@ -1347,6 +1347,8 @@ function resolveModelKey(device) {
     if (candidate.includes("UDBSWITCH") || candidate.includes("DEVICEBRIDGESWITCH")) return "UDBSWITCH";
     if (candidate.includes("UDBIOT") || candidate.includes("DEVICEBRIDGEIOT")) return "UDBIOT";
     if (candidate === "UDB" || candidate.includes("DEVICEBRIDGE")) return "UDB";
+    if (candidate.includes("UDMA6A8")) return "UCGFIBER";
+    if (candidate === "UCGF") return "UCGFIBER";
     if (candidate.includes("UCGFIBER")) return "UCGFIBER";
     if (candidate.includes("CLOUDGATEWAYFIBER")) return "UCGFIBER";
     if (candidate === "UDM") return "UDM";
@@ -1550,7 +1552,7 @@ function inferPortCountFromModel(device) {
   if (text.includes("UDMPRO")) return 11;
   if (text === "UDM" || text.includes("DREAMMACHINE")) return 5;
   if (text === "UDR" || text.includes("DREAMROUTER")) return 5;
-  if (text.includes("UCGFIBER") || text.includes("CLOUDGATEWAYFIBER")) return 7;
+  if (text.includes("UDMA6A8") || text === "UCGF" || text.includes("UCGFIBER") || text.includes("CLOUDGATEWAYFIBER")) return 7;
   if (text.includes("UDM67AUDR7") || text.includes("UDR7") || text.includes("DREAMROUTER7")) return 5;
   if (text.includes("UDM67A")) return 11;
   if (text.includes("UCGULTRA") || text.includes("CLOUDGATEWAYULTRA") || text.includes("UDRULT")) return 5;
@@ -2122,6 +2124,13 @@ var _registryInflight = /* @__PURE__ */ new WeakMap();
 var DEVICE_CONTEXT_CACHE_TTL = 3e4;
 var _deviceContextCache = /* @__PURE__ */ new WeakMap();
 var _deviceContextInflight = /* @__PURE__ */ new WeakMap();
+function invalidateUnifiDeviceDataCache(hass) {
+  if (!hass) return;
+  _registryCache.delete(hass);
+  _registryInflight.delete(hass);
+  _deviceContextCache.delete(hass);
+  _deviceContextInflight.delete(hass);
+}
 function normalizePortsPerRowForCache(cardConfig) {
   const raw = Number.parseInt(cardConfig?.ports_per_row, 10);
   if (!Number.isFinite(raw) || raw < 1) return "";
@@ -2159,7 +2168,7 @@ async function getAllData(hass) {
       safeCallWS(hass, { type: "config/config_entries" }, fallbackConfigEntries)
     ]);
     const allEntities = rawEntities || [];
-    const entities = allEntities.filter((e) => !e.disabled_by && !e.hidden_by);
+    const entities = allEntities.filter((e) => !e.disabled_by);
     const entitiesByDevice = /* @__PURE__ */ new Map();
     for (const entity of entities) {
       if (!entity.device_id) continue;
@@ -3474,7 +3483,8 @@ async function buildDeviceContext(hass, deviceId, cardConfig = null) {
       cpu_temperature_entity: null,
       memory_utilization_entity: null,
       temperature_entity: null,
-      fake_device: true
+      fake_device: true,
+      unifi_config_entry_ids: []
     };
   }
   const { devices, entitiesByDevice, allEntitiesByDevice, configEntries } = await getAllData(hass);
@@ -3559,6 +3569,7 @@ async function buildDeviceContext(hass, deviceId, cardConfig = null) {
     mesh_signal_entity: meshSignalEntity,
     ap_uplink: apUplink,
     reboot_entity: getDeviceRebootEntity(entities),
+    unifi_config_entry_ids: (device.config_entries || []).filter((entryId) => unifiEntryIds.has(entryId)),
     ...telemetry,
     numberedPorts
   };
@@ -3992,6 +4003,8 @@ var TRANSLATIONS = {
     led_off: "LED Off",
     // Hints
     speed_disabled: "Speed entity disabled \u2014 enable it in HA to show link speed.",
+    port_status_unknown: "Port status unavailable",
+    open_device_entities: "Open device entities",
     telemetry_unavailable_title: "Telemetry not available",
     telemetry_unavailable_body: "The selected device does not provide the following telemetry data, so these values are not shown in the header.",
     // Editor
@@ -4007,6 +4020,11 @@ var TRANSLATIONS = {
     editor_telemetry_toggle_label: "Header telemetry",
     editor_telemetry_toggle_text: "Show telemetry data in the card header",
     editor_telemetry_toggle_hint: "Enabled by default. Disable to hide CPU, memory, and temperature rows in the header.",
+    editor_appearance_mode_label: "Appearance",
+    editor_appearance_mode_auto: "Automatic (Home Assistant theme)",
+    editor_appearance_mode_light: "Light",
+    editor_appearance_mode_dark: "Dark",
+    editor_appearance_mode_hint: "Automatic follows the active Home Assistant theme. Light and dark override it for this card.",
     editor_product_image_toggle_label: "Product view",
     editor_product_image_toggle_text: "Show the real product image",
     editor_product_image_available: "Official Ubiquiti artwork is available for {model}. Enabling this option loads it from Ubiquiti's image CDN.",
@@ -4136,6 +4154,11 @@ var TRANSLATIONS = {
     warning_status: "Status summary: {disabled} disabled, {hidden} hidden.",
     warning_check_in: "Check in Home Assistant under:",
     warning_ha_path: "Settings \u2192 Devices &amp; Services \u2192 UniFi \u2192 Devices / Entities",
+    warning_enable_link_speed: "Enable link speed sensors",
+    warning_enable_link_speed_confirm: "Enable {count} disabled link speed sensors and reload the UniFi integration? UniFi will be briefly unavailable while it reloads.",
+    warning_enabling_link_speed: "Enabling sensors and reloading UniFi\u2026",
+    warning_enable_link_speed_success: "Link speed sensors enabled. Port status appears as soon as UniFi reports the refreshed states.",
+    warning_enable_link_speed_error: "Not all link speed sensors could be enabled. Open the device entities in Home Assistant and enable them manually.",
     // Entity warning — entity type labels (used with a leading count number)
     warning_entity_port_switch: "port switch entities",
     warning_entity_poe_switch: "PoE switch entities",
@@ -4213,6 +4236,8 @@ var TRANSLATIONS = {
     led_off: "LED Aus",
     // Hints
     speed_disabled: "Speed-Entity deaktiviert \u2014 in HA aktivieren f\xFCr Geschwindigkeitsanzeige.",
+    port_status_unknown: "Portstatus nicht verf\xFCgbar",
+    open_device_entities: "Ger\xE4te-Entities \xF6ffnen",
     telemetry_unavailable_title: "Telemetrie nicht verf\xFCgbar",
     telemetry_unavailable_body: "Das ausgew\xE4hlte Ger\xE4t stellt die folgenden Telemetriedaten nicht bereit. Diese Werte werden daher nicht im Header angezeigt.",
     // Editor
@@ -4228,6 +4253,11 @@ var TRANSLATIONS = {
     editor_telemetry_toggle_label: "Header-Telemetrie",
     editor_telemetry_toggle_text: "Telemetriedaten im Karten-Header anzeigen",
     editor_telemetry_toggle_hint: "Standardm\xE4\xDFig aktiviert. Deaktivieren blendet CPU-, Speicher- und Temperaturzeilen im Header aus.",
+    editor_appearance_mode_label: "Darstellung",
+    editor_appearance_mode_auto: "Automatisch (Home-Assistant-Theme)",
+    editor_appearance_mode_light: "Hell",
+    editor_appearance_mode_dark: "Dunkel",
+    editor_appearance_mode_hint: "Automatisch folgt dem aktiven Home-Assistant-Theme. Hell und Dunkel \xFCberschreiben es nur f\xFCr diese Karte.",
     editor_product_image_toggle_label: "Produktansicht",
     editor_product_image_toggle_text: "Echtes Produktbild anzeigen",
     editor_product_image_available: "F\xFCr {model} ist ein offizielles Ubiquiti-Produktbild hinterlegt. Beim Aktivieren wird es vom Ubiquiti-Bild-CDN geladen.",
@@ -4357,6 +4387,11 @@ var TRANSLATIONS = {
     warning_status: "Zusammenfassung: {disabled} deaktiviert, {hidden} versteckt.",
     warning_check_in: "In Home Assistant pr\xFCfen unter:",
     warning_ha_path: "Einstellungen \u2192 Ger\xE4te &amp; Dienste \u2192 UniFi \u2192 Ger\xE4te / Entities",
+    warning_enable_link_speed: "Linkgeschwindigkeitssensoren aktivieren",
+    warning_enable_link_speed_confirm: "{count} deaktivierte Linkgeschwindigkeitssensoren aktivieren und die UniFi-Integration neu laden? UniFi ist w\xE4hrenddessen kurz nicht verf\xFCgbar.",
+    warning_enabling_link_speed: "Sensoren werden aktiviert und UniFi wird neu geladen\u2026",
+    warning_enable_link_speed_success: "Linkgeschwindigkeitssensoren aktiviert. Der Portstatus erscheint, sobald UniFi die aktualisierten Zust\xE4nde meldet.",
+    warning_enable_link_speed_error: "Nicht alle Linkgeschwindigkeitssensoren konnten aktiviert werden. \xD6ffne die Ger\xE4te-Entities in Home Assistant und aktiviere sie manuell.",
     // Entity warning — entity type labels
     warning_entity_port_switch: "Port-Switch-Entities",
     warning_entity_poe_switch: "PoE-Switch-Entities",
@@ -4423,6 +4458,8 @@ var TRANSLATIONS = {
     led_off: "LED uit",
     // Hints
     speed_disabled: "Snelheidsentiteit uitgeschakeld \u2014 schakel in HA in om linksnelheid te tonen.",
+    port_status_unknown: "Poortstatus niet beschikbaar",
+    open_device_entities: "Apparaatentiteiten openen",
     telemetry_unavailable_title: "Telemetrie niet beschikbaar",
     telemetry_unavailable_body: "Het geselecteerde apparaat levert de volgende telemetriegegevens niet, daarom worden deze waarden niet in de kop getoond.",
     // Editor
@@ -4438,6 +4475,11 @@ var TRANSLATIONS = {
     editor_telemetry_toggle_label: "Headertelemetrie",
     editor_telemetry_toggle_text: "Telemetriegegevens in de kaartkop tonen",
     editor_telemetry_toggle_hint: "Standaard ingeschakeld. Uitschakelen verbergt CPU-, geheugen- en temperatuurregels in de kop.",
+    editor_appearance_mode_label: "Weergave",
+    editor_appearance_mode_auto: "Automatisch (Home Assistant-thema)",
+    editor_appearance_mode_light: "Licht",
+    editor_appearance_mode_dark: "Donker",
+    editor_appearance_mode_hint: "Automatisch volgt het actieve Home Assistant-thema. Licht en donker overschrijven dit alleen voor deze kaart.",
     editor_product_image_toggle_label: "Productweergave",
     editor_product_image_toggle_text: "Echte productafbeelding tonen",
     editor_product_image_available: "Offici\xEBle Ubiquiti-afbeeldingen zijn beschikbaar voor {model}. Bij inschakelen worden ze geladen via Ubiquiti's afbeeldings-CDN.",
@@ -4565,6 +4607,11 @@ var TRANSLATIONS = {
     warning_status: "Samenvatting: {disabled} uitgeschakeld, {hidden} verborgen.",
     warning_check_in: "Controleer in Home Assistant onder:",
     warning_ha_path: "Instellingen \u2192 Apparaten &amp; Diensten \u2192 UniFi \u2192 Apparaten / Entiteiten",
+    warning_enable_link_speed: "Linksnelheidssensoren inschakelen",
+    warning_enable_link_speed_confirm: "{count} uitgeschakelde linksnelheidssensoren inschakelen en de UniFi-integratie herladen? UniFi is tijdens het herladen kort niet beschikbaar.",
+    warning_enabling_link_speed: "Sensoren inschakelen en UniFi herladen\u2026",
+    warning_enable_link_speed_success: "Linksnelheidssensoren ingeschakeld. De poortstatus verschijnt zodra UniFi de vernieuwde statussen meldt.",
+    warning_enable_link_speed_error: "Niet alle linksnelheidssensoren konden worden ingeschakeld. Open de apparaatentiteiten in Home Assistant en schakel ze handmatig in.",
     warning_entity_port_switch: "poortschakelaar-entiteiten",
     warning_entity_poe_switch: "PoE-schakelaar-entiteiten",
     warning_entity_poe_power: "PoE-vermogenssensoren",
@@ -4629,6 +4676,8 @@ var TRANSLATIONS = {
     led_off: "LED d\xE9sactiv\xE9e",
     // Hints
     speed_disabled: "Entit\xE9 de vitesse d\xE9sactiv\xE9e \u2014 activez-la dans HA pour afficher la vitesse.",
+    port_status_unknown: "\xC9tat des ports indisponible",
+    open_device_entities: "Ouvrir les entit\xE9s de l\u2019appareil",
     telemetry_unavailable_title: "T\xE9l\xE9m\xE9trie non disponible",
     telemetry_unavailable_body: "L'appareil s\xE9lectionn\xE9 ne fournit pas les donn\xE9es de t\xE9l\xE9m\xE9trie suivantes ; ces valeurs ne sont donc pas affich\xE9es dans l'en-t\xEAte.",
     // Editor
@@ -4644,6 +4693,11 @@ var TRANSLATIONS = {
     editor_telemetry_toggle_label: "T\xE9l\xE9m\xE9trie d\u2019en-t\xEAte",
     editor_telemetry_toggle_text: "Afficher les donn\xE9es de t\xE9l\xE9m\xE9trie dans l\u2019en-t\xEAte",
     editor_telemetry_toggle_hint: "Activ\xE9 par d\xE9faut. D\xE9sactivez pour masquer les lignes CPU, m\xE9moire et temp\xE9rature dans l\u2019en-t\xEAte.",
+    editor_appearance_mode_label: "Apparence",
+    editor_appearance_mode_auto: "Automatique (th\xE8me Home Assistant)",
+    editor_appearance_mode_light: "Clair",
+    editor_appearance_mode_dark: "Sombre",
+    editor_appearance_mode_hint: "Le mode automatique suit le th\xE8me Home Assistant actif. Clair et sombre le remplacent uniquement pour cette carte.",
     editor_product_image_toggle_label: "Vue du produit",
     editor_product_image_toggle_text: "Afficher la v\xE9ritable image du produit",
     editor_product_image_available: "Une image officielle Ubiquiti est disponible pour {model}. Elle sera charg\xE9e depuis le CDN d'images Ubiquiti.",
@@ -4771,6 +4825,11 @@ var TRANSLATIONS = {
     warning_status: "R\xE9sum\xE9 : {disabled} d\xE9sactiv\xE9e(s), {hidden} masqu\xE9e(s).",
     warning_check_in: "V\xE9rifier dans Home Assistant sous :",
     warning_ha_path: "Param\xE8tres \u2192 Appareils &amp; Services \u2192 UniFi \u2192 Appareils / Entit\xE9s",
+    warning_enable_link_speed: "Activer les capteurs de vitesse de lien",
+    warning_enable_link_speed_confirm: "Activer {count} capteurs de vitesse de lien d\xE9sactiv\xE9s et recharger l\u2019int\xE9gration UniFi ? UniFi sera bri\xE8vement indisponible pendant le rechargement.",
+    warning_enabling_link_speed: "Activation des capteurs et rechargement d\u2019UniFi\u2026",
+    warning_enable_link_speed_success: "Capteurs de vitesse de lien activ\xE9s. L\u2019\xE9tat des ports appara\xEEt d\xE8s qu\u2019UniFi publie les nouveaux \xE9tats.",
+    warning_enable_link_speed_error: "Tous les capteurs de vitesse de lien n\u2019ont pas pu \xEAtre activ\xE9s. Ouvrez les entit\xE9s de l\u2019appareil dans Home Assistant et activez-les manuellement.",
     warning_entity_port_switch: "entit\xE9s de commutateur de port",
     warning_entity_poe_switch: "entit\xE9s de commutateur PoE",
     warning_entity_poe_power: "capteurs de puissance PoE",
@@ -4835,6 +4894,8 @@ var TRANSLATIONS = {
     led_off: "LED apagado",
     // Hints
     speed_disabled: "Entidad de velocidad deshabilitada \u2014 act\xEDvala en HA para mostrar la velocidad de enlace.",
+    port_status_unknown: "Estado de puertos no disponible",
+    open_device_entities: "Abrir entidades del dispositivo",
     telemetry_unavailable_title: "Telemetr\xEDa no disponible",
     telemetry_unavailable_body: "El dispositivo seleccionado no proporciona los siguientes datos de telemetr\xEDa, por lo que estos valores no se muestran en el encabezado.",
     // Editor
@@ -4850,6 +4911,11 @@ var TRANSLATIONS = {
     editor_telemetry_toggle_label: "Telemetr\xEDa del encabezado",
     editor_telemetry_toggle_text: "Mostrar datos de telemetr\xEDa en el encabezado",
     editor_telemetry_toggle_hint: "Activado por defecto. Desact\xEDvalo para ocultar CPU, memoria y temperatura en el encabezado.",
+    editor_appearance_mode_label: "Apariencia",
+    editor_appearance_mode_auto: "Autom\xE1tico (tema de Home Assistant)",
+    editor_appearance_mode_light: "Claro",
+    editor_appearance_mode_dark: "Oscuro",
+    editor_appearance_mode_hint: "El modo autom\xE1tico sigue el tema activo de Home Assistant. Claro y oscuro lo reemplazan solo para esta tarjeta.",
     editor_product_image_toggle_label: "Vista del producto",
     editor_product_image_toggle_text: "Mostrar la imagen real del producto",
     editor_product_image_available: "Hay una imagen oficial de Ubiquiti para {model}. Al activarla se carga desde el CDN de im\xE1genes de Ubiquiti.",
@@ -4977,6 +5043,11 @@ var TRANSLATIONS = {
     warning_status: "Resumen: {disabled} deshabilitadas, {hidden} ocultas.",
     warning_check_in: "Comprobar en Home Assistant en:",
     warning_ha_path: "Ajustes \u2192 Dispositivos y servicios \u2192 UniFi \u2192 Dispositivos / Entidades",
+    warning_enable_link_speed: "Activar sensores de velocidad de enlace",
+    warning_enable_link_speed_confirm: "\xBFActivar {count} sensores de velocidad de enlace deshabilitados y recargar la integraci\xF3n UniFi? UniFi no estar\xE1 disponible brevemente durante la recarga.",
+    warning_enabling_link_speed: "Activando sensores y recargando UniFi\u2026",
+    warning_enable_link_speed_success: "Sensores de velocidad de enlace activados. El estado de los puertos aparecer\xE1 cuando UniFi publique los estados actualizados.",
+    warning_enable_link_speed_error: "No se pudieron activar todos los sensores de velocidad de enlace. Abre las entidades del dispositivo en Home Assistant y act\xEDvalas manualmente.",
     warning_entity_port_switch: "entidades de conmutaci\xF3n de puerto",
     warning_entity_poe_switch: "entidades de conmutaci\xF3n PoE",
     warning_entity_poe_power: "sensores de potencia PoE",
@@ -5041,6 +5112,8 @@ var TRANSLATIONS = {
     led_off: "LED spento",
     // Hints
     speed_disabled: "Entit\xE0 velocit\xE0 disabilitata \u2014 abilitala in HA per mostrare la velocit\xE0 del link.",
+    port_status_unknown: "Stato porte non disponibile",
+    open_device_entities: "Apri entit\xE0 del dispositivo",
     telemetry_unavailable_title: "Telemetria non disponibile",
     telemetry_unavailable_body: "Il dispositivo selezionato non fornisce i seguenti dati di telemetria, quindi questi valori non vengono mostrati nell\u2019header.",
     // Editor
@@ -5056,6 +5129,11 @@ var TRANSLATIONS = {
     editor_telemetry_toggle_label: "Telemetria header",
     editor_telemetry_toggle_text: "Mostra i dati di telemetria nell\u2019header",
     editor_telemetry_toggle_hint: "Abilitato per default. Disattiva per nascondere CPU, memoria e temperatura nell\u2019header.",
+    editor_appearance_mode_label: "Aspetto",
+    editor_appearance_mode_auto: "Automatico (tema Home Assistant)",
+    editor_appearance_mode_light: "Chiaro",
+    editor_appearance_mode_dark: "Scuro",
+    editor_appearance_mode_hint: "La modalit\xE0 automatica segue il tema Home Assistant attivo. Chiaro e scuro lo sostituiscono solo per questa scheda.",
     editor_product_image_toggle_label: "Vista prodotto",
     editor_product_image_toggle_text: "Mostra l'immagine reale del prodotto",
     editor_product_image_available: "\xC8 disponibile un'immagine ufficiale Ubiquiti per {model}. Attivandola verr\xE0 caricata dal CDN immagini di Ubiquiti.",
@@ -5183,6 +5261,11 @@ var TRANSLATIONS = {
     warning_status: "Riepilogo: {disabled} disabilitate, {hidden} nascoste.",
     warning_check_in: "Controlla in Home Assistant in:",
     warning_ha_path: "Impostazioni \u2192 Dispositivi e servizi \u2192 UniFi \u2192 Dispositivi / Entit\xE0",
+    warning_enable_link_speed: "Abilita sensori velocit\xE0 link",
+    warning_enable_link_speed_confirm: "Abilitare {count} sensori velocit\xE0 link disattivati e ricaricare l\u2019integrazione UniFi? UniFi non sar\xE0 disponibile per un breve periodo durante il ricaricamento.",
+    warning_enabling_link_speed: "Abilitazione sensori e ricaricamento di UniFi\u2026",
+    warning_enable_link_speed_success: "Sensori velocit\xE0 link abilitati. Lo stato delle porte appare non appena UniFi pubblica gli stati aggiornati.",
+    warning_enable_link_speed_error: "Non \xE8 stato possibile abilitare tutti i sensori velocit\xE0 link. Apri le entit\xE0 del dispositivo in Home Assistant e abilitali manualmente.",
     warning_entity_port_switch: "entit\xE0 switch porta",
     warning_entity_poe_switch: "entit\xE0 switch PoE",
     warning_entity_poe_power: "sensori potenza PoE",
@@ -5584,6 +5667,8 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     this._colorStepBaseConfig = null;
     this._trustLinkSpeedPortsExpanded = false;
     this._portLedBlinkExpanded = false;
+    this._portSensorActionState = "";
+    this._portSensorActionError = "";
   }
   setConfig(config) {
     const prevDeviceId = this._config?.device_id || "";
@@ -5605,6 +5690,8 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
       this._deviceCtxLoading = false;
       this._lastHintDeviceId = null;
       this._lastCtxDeviceId = null;
+      this._portSensorActionState = "";
+      this._portSensorActionError = "";
       if (this._hass) this._loadDevices();
     }
     const selectionMatchesMode = nextFakeMode ? nextDeviceId.startsWith("fake:") : !nextDeviceId.startsWith("fake:");
@@ -5616,6 +5703,8 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
         this._deviceCtx = null;
         this._lastHintDeviceId = null;
         this._lastCtxDeviceId = null;
+        this._portSensorActionState = "";
+        this._portSensorActionError = "";
         if (!nextFakeMode) this._loadEntityHint(nextDeviceId);
       }
       if (nextDeviceId !== prevDeviceId || !this._deviceCtx) {
@@ -5746,6 +5835,47 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     this._deviceCtxLoading = false;
     this._patchFields();
   }
+  async _enablePortLinkSpeedEntities() {
+    if (!this._hass || this._portSensorActionState === "working") return;
+    const entityIds = Array.from(new Set(this._entityHint?.disabled?.link_speed || []));
+    if (!entityIds.length) return;
+    const message = this._t("warning_enable_link_speed_confirm").replace("{count}", String(entityIds.length));
+    if (!window.confirm(message)) return;
+    this._portSensorActionState = "working";
+    this._portSensorActionError = "";
+    this._patchWarning();
+    try {
+      for (let offset = 0; offset < entityIds.length; offset += 8) {
+        const batch = entityIds.slice(offset, offset + 8);
+        await Promise.all(batch.map((entityId) => this._hass.callWS({
+          type: "config/entity_registry/update",
+          entity_id: entityId,
+          disabled_by: null
+        })));
+      }
+      const entryIds = Array.from(new Set(this._deviceCtx?.unifi_config_entry_ids || []));
+      for (const entryId of entryIds) {
+        await this._hass.callWS({ type: "config_entries/reload", entry_id: entryId });
+      }
+      invalidateUnifiDeviceDataCache(this._hass);
+      this._portSensorActionState = "success";
+      this._lastHintDeviceId = null;
+      this._lastCtxDeviceId = null;
+      window.dispatchEvent(new CustomEvent("unifi-device-card-entities-changed", {
+        detail: { deviceId: this._config?.device_id || "" }
+      }));
+      await Promise.all([
+        this._loadEntityHint(this._config?.device_id),
+        this._loadDeviceCtx(this._config?.device_id)
+      ]);
+    } catch (err) {
+      console.error("[unifi-device-card] failed to enable port link speed entities", err);
+      invalidateUnifiDeviceDataCache(this._hass);
+      this._portSensorActionState = "error";
+      this._portSensorActionError = this._t("warning_enable_link_speed_error");
+      this._patchWarning();
+    }
+  }
   _dispatchConfig(config) {
     this.dispatchEvent(new CustomEvent("config-changed", {
       detail: { config },
@@ -5763,6 +5893,8 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     if (!next.mesh_signal_entity) delete next.mesh_signal_entity;
     next.product_image_url = normalizeProductImageUrl(next.product_image_url);
     if (!next.product_image_url) delete next.product_image_url;
+    next.appearance_mode = String(next.appearance_mode || "auto").toLowerCase();
+    if (!["light", "dark"].includes(next.appearance_mode)) delete next.appearance_mode;
     if (!next.background_color) delete next.background_color;
     const buttonThemeStyle = next.button_theme_style !== false;
     if (buttonThemeStyle) {
@@ -6146,6 +6278,9 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     `;
   }
   _warningHTML() {
+    if (!this._entityHint && this._portSensorActionState === "success") {
+      return `<div class="warn success"><div class="warn-title">${escapeHtml(this._t("warning_enable_link_speed_success"))}</div></div>`;
+    }
     if (this._entityHintLoading && !this._entityHint) {
       return `<div class="warn loading">${escapeHtml(this._t("warning_checking"))}</div>`;
     }
@@ -6157,6 +6292,11 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     const list = items.length ? `<ul>${items.map(
       (item) => `<li><strong>${escapeHtml(item.count)}</strong> ${escapeHtml(this._t(`warning_entity_${item.key}`))}</li>`
     ).join("")}</ul>` : "";
+    const disabledLinkSpeedCount = this._entityHint?.disabled?.link_speed?.length || 0;
+    const action = disabledLinkSpeedCount > 0 ? `<button type="button" class="warn-action" id="enable_link_speed_entities" ${this._portSensorActionState === "working" ? "disabled" : ""}>
+          ${escapeHtml(this._portSensorActionState === "working" ? this._t("warning_enabling_link_speed") : this._t("warning_enable_link_speed"))}
+        </button>` : "";
+    const actionState = this._portSensorActionState === "success" ? `<div class="warn-action-state success-text">${escapeHtml(this._t("warning_enable_link_speed_success"))}</div>` : this._portSensorActionState === "error" ? `<div class="warn-action-state error-text">${escapeHtml(this._portSensorActionError || this._t("warning_enable_link_speed_error"))}</div>` : "";
     return `
       <div class="warn">
         <div class="warn-title">${escapeHtml(this._t("warning_title"))}</div>
@@ -6167,6 +6307,8 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
           <strong>${escapeHtml(this._t("warning_check_in"))}</strong><br>
           ${escapeHtml(this._t("warning_ha_path"))}
         </div>
+        ${action}
+        ${actionState}
       </div>
     `;
   }
@@ -6445,6 +6587,11 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
         border-color: rgba(59, 130, 246, 0.35);
       }
 
+      .warn.success {
+        background: rgba(34, 197, 94, 0.1);
+        border-color: rgba(34, 197, 94, 0.3);
+      }
+
       .warn-title {
         font-weight: 700;
         margin-bottom: 6px;
@@ -6465,6 +6612,33 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
       .warn li {
         margin: 4px 0;
       }
+
+      .warn-action {
+        width: 100%;
+        margin-top: 12px;
+        padding: 9px 12px;
+        border: 1px solid color-mix(in srgb, var(--primary-color) 70%, transparent);
+        border-radius: 10px;
+        background: var(--primary-color);
+        color: #fff;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .warn-action:disabled {
+        opacity: .65;
+        cursor: progress;
+      }
+
+      .warn-action-state {
+        margin-top: 8px;
+        font-size: .85rem;
+        line-height: 1.4;
+      }
+
+      .success-text { color: var(--success-color, #188447); }
+      .error-text { color: var(--error-color, #db4437); }
 
       .empty,
       .error {
@@ -6517,6 +6691,7 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     const nameValue = this._config?.name || "";
     const showName = this._config?.show_name !== false;
     const showTelemetry = this._config?.show_telemetry !== false;
+    const appearanceMode = ["light", "dark"].includes(String(this._config?.appearance_mode || "").toLowerCase()) ? String(this._config.appearance_mode).toLowerCase() : "auto";
     const showProductImage = this._config?.show_product_image === true;
     const productImageUrl = String(this._config?.product_image_url || "").trim();
     const officialProductImage = getOfficialProductImage(this._deviceCtx?.layout?.modelKey);
@@ -6606,6 +6781,16 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
             <span>${escapeHtml(this._t("editor_telemetry_toggle_text"))}</span>
           </label>
           <div class="hint">${escapeHtml(this._t("editor_telemetry_toggle_hint"))}</div>
+        </div>
+
+        <div class="field">
+          <label>${escapeHtml(this._t("editor_appearance_mode_label"))}</label>
+          <select id="appearance_mode">
+            <option value="auto" ${appearanceMode === "auto" ? "selected" : ""}>${escapeHtml(this._t("editor_appearance_mode_auto"))}</option>
+            <option value="light" ${appearanceMode === "light" ? "selected" : ""}>${escapeHtml(this._t("editor_appearance_mode_light"))}</option>
+            <option value="dark" ${appearanceMode === "dark" ? "selected" : ""}>${escapeHtml(this._t("editor_appearance_mode_dark"))}</option>
+          </select>
+          <div class="hint">${escapeHtml(this._t("editor_appearance_mode_hint"))}</div>
         </div>
 
         <div class="field">
@@ -6851,6 +7036,9 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     this.shadowRoot.getElementById("device_id")?.addEventListener("change", (ev) => this._onDeviceChange(ev));
     this.shadowRoot.getElementById("show_name")?.addEventListener("change", (ev) => this._onShowNameChange(ev));
     this.shadowRoot.getElementById("show_telemetry")?.addEventListener("change", (ev) => this._onShowTelemetryChange(ev));
+    this.shadowRoot.getElementById("appearance_mode")?.addEventListener("change", (ev) => this._emitConfig({
+      appearance_mode: ev.target.value === "auto" ? void 0 : ev.target.value
+    }));
     this.shadowRoot.getElementById("show_product_image")?.addEventListener("change", (ev) => this._onShowProductImageChange(ev));
     this.shadowRoot.getElementById("product_image_url")?.addEventListener("change", (ev) => this._onProductImageUrlChange(ev));
     this.shadowRoot.getElementById("mesh_signal_entity")?.addEventListener("change", (ev) => this._onMeshSignalEntityChange(ev));
@@ -6903,13 +7091,18 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     this.shadowRoot.getElementById("color_picker_hex")?.addEventListener("change", (ev) => this._onDraftColorHexInput(ev));
     this.shadowRoot.getElementById("color_picker_raw")?.addEventListener("change", (ev) => this._onDraftColorRawInput(ev));
     this.shadowRoot.getElementById("reset_color_slot")?.addEventListener("click", () => this._onResetSlotColor());
+    this._attachWarningHandlers();
     this._restoreFocusState(focusState);
+  }
+  _attachWarningHandlers() {
+    this.shadowRoot?.getElementById("enable_link_speed_entities")?.addEventListener("click", () => this._enablePortLinkSpeedEntities());
   }
   _patchWarning() {
     if (!this._rendered || !this.shadowRoot) return;
     const slot = this.shadowRoot.getElementById("warning_slot");
     if (!slot) return;
     slot.innerHTML = `${this._warningHTML()}${this._unavailableTelemetryHTML()}`;
+    this._attachWarningHandlers();
   }
   _patchFields() {
     if (!this._rendered || !this.shadowRoot) return;
@@ -6960,6 +7153,14 @@ var UnifiDeviceCard = class extends HTMLElement {
     this._failedProductImageSrc = "";
     this._productImageView = "front";
     this._sfpConnectedSeen = /* @__PURE__ */ new Set();
+    this._handleEntityRegistryChanged = (event) => {
+      if (event?.detail?.deviceId !== this._config?.device_id) return;
+      ++this._loadToken;
+      this._loadedDeviceId = null;
+      this._contextLoadedAt = 0;
+      this._loading = false;
+      this._ensureLoaded();
+    };
   }
   _configuredLogLevel() {
     const raw = String(this._config?.log_level || "").toLowerCase().trim();
@@ -7046,6 +7247,7 @@ var UnifiDeviceCard = class extends HTMLElement {
     };
   }
   connectedCallback() {
+    window.addEventListener("unifi-device-card-entities-changed", this._handleEntityRegistryChanged);
     if (this._resizeObserver) return;
     this._resizeObserver = new ResizeObserver(() => {
       const nextWidth = this._measuredCardWidth();
@@ -7057,6 +7259,7 @@ var UnifiDeviceCard = class extends HTMLElement {
     this._syncUptimeRefreshTimer();
   }
   disconnectedCallback() {
+    window.removeEventListener("unifi-device-card-entities-changed", this._handleEntityRegistryChanged);
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._panelObserver?.disconnect();
@@ -7121,11 +7324,13 @@ var UnifiDeviceCard = class extends HTMLElement {
   }
   set hass(hass) {
     const previousHass = this._hass;
+    const previousAppearanceMode = this._resolvedAppearanceMode(previousHass);
     this._hass = hass;
     this._ensureLoaded();
     this._log("trace", "hass update");
     const telemetrySelectionChanged = this._refreshTelemetrySelection(previousHass);
-    if (!previousHass || !this._ctx || telemetrySelectionChanged || this._hasRelevantStateChanges(previousHass, hass)) {
+    const appearanceModeChanged = previousAppearanceMode !== this._resolvedAppearanceMode(hass);
+    if (!previousHass || !this._ctx || telemetrySelectionChanged || appearanceModeChanged || this._hasRelevantStateChanges(previousHass, hass)) {
       this._render();
     }
   }
@@ -7273,6 +7478,24 @@ var UnifiDeviceCard = class extends HTMLElement {
     const opacity = Number.isFinite(opacityRaw) ? Math.min(100, Math.max(0, opacityRaw)) : 100;
     if (opacity >= 100) return color;
     return `color-mix(in srgb, ${color} ${opacity}%, transparent)`;
+  }
+  _configuredAppearanceMode() {
+    const configured = String(this._config?.appearance_mode || "auto").toLowerCase();
+    return ["light", "dark"].includes(configured) ? configured : "auto";
+  }
+  _resolvedAppearanceMode(hass = this._hass) {
+    const configured = this._configuredAppearanceMode();
+    if (configured !== "auto") return configured;
+    if (typeof hass?.themes?.darkMode === "boolean") {
+      return hass.themes.darkMode ? "dark" : "light";
+    }
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    return "light";
+  }
+  _appearanceModeClass() {
+    return `mode-${this._resolvedAppearanceMode()} appearance-${this._configuredAppearanceMode()}`;
   }
   _cardChromeBgStyle() {
     if (this._ctx?.type === "switch" || this._ctx?.type === "gateway") {
@@ -7936,7 +8159,7 @@ var UnifiDeviceCard = class extends HTMLElement {
     };
   }
   _renderWirelessClientBands(data) {
-    if (!data || data.matchedCount < 1) return "";
+    if (!data || !data.hasTotal) return "";
     const definitions = [
       ["2.4", "band_24"],
       ["5", "band_5"],
@@ -7946,16 +8169,21 @@ var UnifiDeviceCard = class extends HTMLElement {
     if (unknownCount > 0) definitions.push(["unknown", "band_unknown"]);
     return `
       <section class="wireless-clients" aria-label="${this._escapeAttr(this._t("wlan_clients_by_band"))}">
-        <div class="wireless-clients-title">${this._escapeHtml(this._t("wlan_clients_by_band"))}</div>
+        <div class="wireless-clients-title">
+          <span>${this._escapeHtml(this._t("wlan_clients_by_band"))}</span>
+          <strong title="${this._escapeAttr(this._t("wlan_clients"))}">${this._escapeHtml(data.total)}</strong>
+        </div>
         <div class="wireless-band-grid">
           ${definitions.map(([band, labelKey]) => {
       const names = data.groups[band] || [];
       const count = band === "unknown" ? unknownCount : names.length;
+      const stateClass = band === "unknown" ? "unknown" : count > 0 ? "active" : "idle";
       const missingLabel = band === "unknown" && data.missingBandData > 0 ? this._t("without_band_data").replace("{count}", String(data.missingBandData)) : "";
       return `
-              <div class="wireless-band ${band === "unknown" ? "unknown" : ""}">
+              <div class="wireless-band ${stateClass}">
                 <div class="wireless-band-heading">
-                  <span>${this._escapeHtml(this._t(labelKey))}</span>
+                  <span class="wireless-radio-led" aria-hidden="true"></span>
+                  <span class="wireless-band-name">${this._escapeHtml(this._t(labelKey))}</span>
                   <strong>${this._escapeHtml(count)}</strong>
                 </div>
                 <div class="wireless-client-list">
@@ -8345,13 +8573,13 @@ var UnifiDeviceCard = class extends HTMLElement {
     window.dispatchEvent(new Event("location-changed"));
   }
   _attachDeviceLinkHandler() {
-    const link = this.shadowRoot?.querySelector("[data-action='open-device']");
-    if (!link) return;
-    link.addEventListener("click", () => this._openDevicePage());
-    link.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      this._openDevicePage();
+    this.shadowRoot?.querySelectorAll("[data-action='open-device']").forEach((link) => {
+      link.addEventListener("click", () => this._openDevicePage());
+      link.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        this._openDevicePage();
+      });
     });
   }
   _headerMetrics() {
@@ -8442,7 +8670,26 @@ var UnifiDeviceCard = class extends HTMLElement {
    * no longer flip the LED off.  The sticky state is cleared only when the
    * link speed itself drops to 0 (cable genuinely removed).
    */
-  _isPortConnected(port) {
+  _hasObservedPortClients(port, portClientIndex = null) {
+    return (this._getMergedPortClientInfo(port, portClientIndex)?.count || 0) > 0;
+  }
+  _hasUsablePortState(entityId) {
+    const obj = stateObj(this._hass, entityId);
+    if (!obj) return false;
+    const value = String(obj.state ?? "").trim().toLowerCase();
+    return !!value && value !== "unknown" && value !== "unavailable";
+  }
+  _isPortStatusKnown(port, portClientIndex = null) {
+    if (this._ctx?.fake_device === true) return true;
+    if (this._hasObservedPortClients(port, portClientIndex)) return true;
+    if (this._hasUsablePortState(port?.link_entity)) return true;
+    if (this._hasUsablePortState(port?.speed_entity)) return true;
+    const control = stateObj(this._hass, port?.port_switch_entity);
+    const controlState = String(control?.state ?? "").trim().toLowerCase();
+    return controlState === "off" || controlState === "false" || controlState === "0";
+  }
+  _isPortConnected(port, portClientIndex = null) {
+    if (this._hasObservedPortClients(port, portClientIndex)) return true;
     const trustLowSpeedLink = this._config?.trust_link_speed_ports?.includes(port?.port) === true;
     if (isSfpLikePort(port)) {
       const key = port?.key || port?.physical_key;
@@ -8459,8 +8706,16 @@ var UnifiDeviceCard = class extends HTMLElement {
     }
     return isPortConnected(this._hass, port, { trustLowSpeedLink });
   }
-  _connectedCount(allSlots) {
-    return allSlots.filter((s) => this._isPortConnected(s)).length;
+  _connectedCount(allSlots, portClientIndex = null) {
+    return allSlots.filter((s) => this._isPortConnected(s, portClientIndex)).length;
+  }
+  _portStatusSummary(allSlots, portClientIndex = null) {
+    const total = allSlots.length;
+    const connected = this._connectedCount(allSlots, portClientIndex);
+    const known = allSlots.filter((slot) => this._isPortStatusKnown(slot, portClientIndex)).length;
+    const complete = total === 0 || known === total;
+    const label = complete ? `${connected}/${total}` : connected > 0 ? `\u2265${connected}/${total}` : `\u2014/${total}`;
+    return { total, connected, known, complete, label };
   }
   _isDeviceOnline() {
     const onlineEntity = this._ctx?.online_entity;
@@ -8475,8 +8730,8 @@ var UnifiDeviceCard = class extends HTMLElement {
   _speedValueMbit(port) {
     return parseLinkSpeedMbit(this._hass, port?.speed_entity);
   }
-  _linkLedClass(port) {
-    const connected = this._isPortConnected(port);
+  _linkLedClass(port, portClientIndex = null) {
+    const connected = this._isPortConnected(port, portClientIndex);
     if (!connected) return "off";
     const speed = this._speedValueMbit(port);
     if (speed == null) return "green";
@@ -8537,7 +8792,8 @@ var UnifiDeviceCard = class extends HTMLElement {
     const mediaType = this._portMediaType(slot);
     const isSfp = mediaType !== "rj45";
     const isWan = this._isWanLike(slot);
-    const linkUp = this._isPortConnected(slot);
+    const linkUp = this._isPortConnected(slot, portClientIndex);
+    const linkKnown = this._isPortStatusKnown(slot, portClientIndex);
     const speedText = linkUp ? getPortSpeedText(this._hass, slot) : null;
     const compactSpeed = linkUp ? this._compactPortSpeed(slot) : "";
     const vlan = this._getPortVlan(slot);
@@ -8549,7 +8805,7 @@ var UnifiDeviceCard = class extends HTMLElement {
     const clientLabel = mergedNames.length ? `${mergedNames[0]}${mergedCount > 1 ? ` +${mergedCount - 1}` : ""}` : mergedCount > 0 ? `${mergedCount} ${this._t("clients")}` : "";
     const tooltip = [
       slot.port_label || (isSpecial ? slot.label : `${this._t("port_label")} ${slot.label}`),
-      this._translateState(linkUp ? "connected" : "no_link"),
+      linkUp ? this._translateState("connected") : linkKnown ? this._translateState("no_link") : this._t("port_status_unknown"),
       speedText ? `${this._t("speed")}: ${speedText}` : null,
       vlan ? `${this._t("vlan")}: ${vlan.value}` : null,
       poeOn ? `${this._t("poe")}${poeStatus.power ? ` ${poeStatus.power}` : " ON"}` : null,
@@ -8564,12 +8820,12 @@ var UnifiDeviceCard = class extends HTMLElement {
       this._rotate180Enabled(this._ctx) ? "rotated180" : "",
       isWan ? "is-wan" : "",
       oddEvenTopRow && !isSpecial && !isSfp ? "odd-even-top" : "",
-      linkUp ? "up" : "down",
+      linkUp ? "up" : linkKnown ? "down" : "unknown",
       selectedKey === slot.key ? "selected" : "",
       this._portLedBlinkEnabled(isSfp ? "sfp" : "rj45") ? "blink-link-led" : ""
     ].filter(Boolean).join(" ");
     const poeLed = this._poeLedClass(slot);
-    const linkLed = this._linkLedClass(slot);
+    const linkLed = this._linkLedClass(slot, portClientIndex);
     const housing = isSfp ? `
         <div class="port-sfp-wrap">
           <div class="sfp-top-led ${linkLed}"></div>
@@ -8645,6 +8901,46 @@ var UnifiDeviceCard = class extends HTMLElement {
         border: 1px solid var(--udc-border);
         box-shadow: var(--ha-card-box-shadow, 0 18px 48px rgba(5, 10, 22, .18));
         transition: box-shadow .22s ease, border-color .22s ease;
+      }
+
+      ha-card.mode-dark {
+        color-scheme: dark;
+        --udc-bg: #10151c;
+        --udc-surface: #181e27;
+        --udc-surf2: #222a35;
+        --udc-text: #edf2f7;
+        --udc-muted: #9da7b5;
+        --udc-border: rgba(177, 190, 207, .18);
+        --udc-green: #2ec56e;
+        --udc-orange: #f2a31a;
+      }
+
+      ha-card.mode-light {
+        color-scheme: light;
+        --udc-bg: #edf0f4;
+        --udc-surface: #f8f9fb;
+        --udc-surf2: #edf0f4;
+        --udc-text: #202631;
+        --udc-muted: #697383;
+        --udc-border: color-mix(in srgb, var(--primary-text-color, #202631) 13%, transparent);
+      }
+
+      ha-card.appearance-dark {
+        --card-background-color: #141920;
+        --ha-card-background: #141920;
+        --primary-text-color: #edf2f7;
+        --secondary-text-color: #9da7b5;
+        --text-primary-color: #ffffff;
+        --divider-color: rgba(177, 190, 207, .18);
+      }
+
+      ha-card.appearance-light {
+        --card-background-color: #ffffff;
+        --ha-card-background: #ffffff;
+        --primary-text-color: #202631;
+        --secondary-text-color: #697383;
+        --text-primary-color: #ffffff;
+        --divider-color: rgba(32, 38, 49, .14);
       }
 
       ha-card::before {
@@ -8785,6 +9081,71 @@ var UnifiDeviceCard = class extends HTMLElement {
       .product-showcase.product-wide { height: clamp(148px, 23cqi, 208px); }
       .product-showcase.product-square { height: clamp(184px, 31cqi, 260px); }
       .product-showcase.product-portrait { height: clamp(238px, 42cqi, 320px); }
+
+      .hardware-stage {
+        flex: 0 0 auto;
+        margin-top: auto;
+      }
+
+      .hardware-stage.has-product-image {
+        margin: 12px 14px 0;
+        overflow: hidden;
+        border: 1px solid color-mix(in srgb, var(--udc-border) 72%, #727983 28%);
+        border-radius: var(--udc-r);
+        background: #c7cacf;
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.78),
+          0 12px 30px rgba(3, 9, 20, .14);
+      }
+
+      .hardware-stage.has-product-image > .product-showcase.network-product {
+        width: auto;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .hardware-stage.has-product-image > .frontpanel {
+        margin-top: 0;
+        border-top: 1px solid rgba(111, 119, 130, .2);
+        border-bottom: 0;
+        background:
+          linear-gradient(180deg, rgba(239,242,245,.82) 0, rgba(207,211,216,.92) 14px, rgba(196,198,202,1) 54px);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.7),
+          inset 0 -1px 0 rgba(67,72,80,.12);
+      }
+
+      ha-card.mode-dark .product-showcase {
+        border-color: rgba(180, 193, 211, .2);
+        background:
+          radial-gradient(circle at 50% 34%, #343d49 0%, #242b35 50%, #171d25 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.09),
+          0 14px 32px rgba(0, 0, 0, .3);
+      }
+
+      ha-card.mode-dark .product-showcase::after {
+        background: rgba(0, 0, 0, .42);
+      }
+
+      ha-card.mode-dark .hardware-stage.has-product-image {
+        border-color: rgba(180, 193, 211, .2);
+        background: #1b222b;
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.08),
+          0 14px 32px rgba(0, 0, 0, .3);
+      }
+
+      ha-card.mode-dark .hardware-stage.has-product-image > .frontpanel {
+        border-top-color: rgba(185, 198, 216, .15);
+        background:
+          linear-gradient(180deg, #303844 0, #252c36 15px, #1d242d 54px);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.08),
+          inset 0 -1px 0 rgba(0,0,0,.28);
+      }
 
       .product-showcase.image-error {
         display: none;
@@ -8941,6 +9302,15 @@ var UnifiDeviceCard = class extends HTMLElement {
         opacity: .78;
       }
 
+      .connection-chip.unknown {
+        opacity: .86;
+      }
+
+      .connection-chip.unknown .dot {
+        background: var(--warning-color, #d79a28);
+        box-shadow: 0 0 6px color-mix(in srgb, var(--warning-color, #d79a28) 58%, transparent);
+      }
+
       .chip .led-indicator {
         width: 7px;
         height: 7px;
@@ -8957,6 +9327,7 @@ var UnifiDeviceCard = class extends HTMLElement {
       .frontpanel {
         padding: 12px 14px 10px;
         display: grid;
+        align-content: start;
         gap: 3px;
         border-bottom: 1px solid var(--udc-border);
         position: relative;
@@ -8977,6 +9348,54 @@ var UnifiDeviceCard = class extends HTMLElement {
       .frontpanel.theme-dark { background: #c4c5c8; }
       .frontpanel.no-panel-bg { background: var(--udc-chrome-bg, transparent); }
 
+      ha-card.mode-dark .frontpanel.theme-white,
+      ha-card.mode-dark .frontpanel.theme-silver,
+      ha-card.mode-dark .frontpanel.theme-dark {
+        background: linear-gradient(180deg, #303844 0%, #242b35 34%, #1b222b 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.08),
+          inset 0 -1px 0 rgba(0,0,0,.3);
+      }
+
+      ha-card.mode-dark .panel-label {
+        color: var(--udc-label-color, #adb6c3);
+      }
+
+      ha-card.mode-dark .port-num,
+      ha-card.mode-dark .port.down .port-num,
+      ha-card.mode-dark .port.unknown .port-num,
+      ha-card.mode-dark .port.up .port-num,
+      ha-card.mode-dark .port-speed,
+      ha-card.mode-dark .port-client {
+        color: var(--udc-port-label-color, #c3cbd6);
+      }
+
+      ha-card.mode-dark .port.special .port-num,
+      ha-card.mode-dark .port.special.down .port-num,
+      ha-card.mode-dark .port.special.up .port-num {
+        color: var(--udc-special-port-label-color, var(--udc-port-label-color, #c3cbd6));
+      }
+
+      ha-card.mode-dark .port-vlan {
+        color: color-mix(in srgb, var(--udc-accent) 68%, var(--udc-port-label-color, #c3cbd6));
+      }
+
+      ha-card.mode-dark .port-telemetry-notice {
+        border-color: rgba(242, 163, 26, .26);
+        background: rgba(242, 163, 26, .1);
+        color: #e8edf3;
+      }
+
+      ha-card.mode-dark .port-telemetry-copy small {
+        color: #aab3c0;
+      }
+
+      ha-card.mode-dark .port-telemetry-notice button {
+        border-color: rgba(190, 202, 218, .2);
+        background: rgba(255,255,255,.08);
+        color: #edf2f7;
+      }
+
       .panel-label {
         font-size: 0.63rem;
         font-weight: 700;
@@ -8984,6 +9403,66 @@ var UnifiDeviceCard = class extends HTMLElement {
         text-transform: uppercase;
         margin-bottom: 2px;
         color: var(--udc-label-color, #7c818b);
+      }
+
+      .port-telemetry-notice {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        margin: 3px 0 10px;
+        padding: 8px 9px;
+        border: 1px solid rgba(151, 105, 18, .2);
+        border-radius: 10px;
+        background: rgba(255, 246, 220, .54);
+        color: #545a64;
+      }
+
+      .port-telemetry-icon {
+        width: 20px;
+        height: 20px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: rgba(188, 128, 20, .16);
+        color: #895d0d;
+        font-size: .72rem;
+        font-weight: 800;
+      }
+
+      .port-telemetry-copy {
+        min-width: 0;
+        display: grid;
+        gap: 1px;
+      }
+
+      .port-telemetry-copy strong {
+        font-size: .69rem;
+        line-height: 1.2;
+      }
+
+      .port-telemetry-copy small {
+        color: #6e737b;
+        font-size: .61rem;
+        line-height: 1.25;
+      }
+
+      .port-telemetry-notice button {
+        min-height: 28px;
+        padding: 0 9px;
+        border: 1px solid rgba(80, 88, 99, .2);
+        border-radius: 999px;
+        background: rgba(255,255,255,.62);
+        color: #424851;
+        font: inherit;
+        font-size: .62rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .port-telemetry-notice button:hover,
+      .port-telemetry-notice button:focus-visible {
+        background: rgba(255,255,255,.92);
       }
 
       .special-row {
@@ -9895,6 +10374,11 @@ var UnifiDeviceCard = class extends HTMLElement {
         filter: saturate(.45) brightness(.78);
       }
 
+      .port.unknown .port-housing {
+        opacity: .68;
+        filter: saturate(.55) brightness(.9);
+      }
+
       .port.up .port-housing {
         opacity: 1;
         filter: saturate(1.05) brightness(1.02);
@@ -10201,6 +10685,11 @@ var UnifiDeviceCard = class extends HTMLElement {
         opacity: .6;
       }
 
+      .port.unknown .port-num {
+        color: var(--udc-port-label-color, #555c67);
+        opacity: .8;
+      }
+
       .port.special.down .port-num {
         color: var(--udc-special-port-label-color, var(--udc-port-label-color, #4c5260));
       }
@@ -10271,6 +10760,10 @@ var UnifiDeviceCard = class extends HTMLElement {
 
       .port.down .port-client {
         opacity: .45;
+      }
+
+      .detail-value.unknown {
+        color: var(--warning-color, #b47b13);
       }
 
       .port:hover .port-meta,
@@ -10399,46 +10892,104 @@ var UnifiDeviceCard = class extends HTMLElement {
 
       .wireless-clients {
         display: grid;
-        gap: 8px;
+        gap: 10px;
         margin-top: 10px;
+        padding: 11px 12px 12px;
+        overflow: hidden;
+        border: 1px solid rgba(84, 92, 104, .24);
+        border-radius: 13px;
+        background: linear-gradient(180deg, #d9dbdf 0%, #c7cacf 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.72),
+          inset 0 -1px 0 rgba(67,72,80,.12);
       }
 
       .wireless-clients-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
         font-size: .69rem;
         font-weight: 750;
         letter-spacing: .055em;
         text-transform: uppercase;
-        color: var(--udc-label-color, var(--secondary-text-color, var(--udc-muted)));
+        color: var(--udc-label-color, #686f7b);
+      }
+
+      .wireless-clients-title strong {
+        display: inline-grid;
+        min-width: 26px;
+        height: 22px;
+        padding: 0 7px;
+        place-items: center;
+        border: 1px solid rgba(73, 82, 94, .26);
+        border-radius: 999px;
+        color: #edf2f7;
+        background: #4b535e;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.1);
+        font-size: .69rem;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0;
       }
 
       .wireless-band-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
-        gap: 7px;
+        grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+        gap: 8px;
       }
 
       .wireless-band {
         min-width: 0;
-        padding: 9px;
-        border: 1px solid color-mix(in srgb, var(--udc-accent) 24%, var(--udc-border));
-        border-radius: 11px;
-        background: color-mix(in srgb, var(--udc-accent) 7%, var(--udc-chrome-bg, var(--card-background-color)));
+        padding: 9px 9px 8px;
+        border: 1px solid rgba(25, 31, 40, .66);
+        border-radius: 8px;
+        background: linear-gradient(180deg, #535c68 0%, #333a44 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.12),
+          inset 0 -2px 5px rgba(0,0,0,.28),
+          0 1px 0 rgba(255,255,255,.34);
       }
 
       .wireless-band.unknown {
-        border-color: var(--udc-border);
-        background: color-mix(in srgb, var(--udc-chrome-bg, var(--card-background-color)) 93%, var(--primary-text-color, #fff) 7%);
+        border-color: rgba(107, 77, 23, .7);
       }
 
       .wireless-band-heading {
-        display: flex;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
         align-items: center;
-        justify-content: space-between;
-        gap: 8px;
+        gap: 7px;
         margin-bottom: 7px;
-        color: var(--udc-value-color, var(--primary-text-color, var(--udc-text)));
+        color: #f0f3f7;
         font-size: .72rem;
         font-weight: 700;
+      }
+
+      .wireless-radio-led {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #7a838f;
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,.28);
+      }
+
+      .wireless-band.active .wireless-radio-led {
+        background: var(--udc-green);
+        box-shadow:
+          0 0 7px color-mix(in srgb, var(--udc-green) 72%, transparent),
+          inset 0 0 0 1px rgba(255,255,255,.2);
+      }
+
+      .wireless-band.unknown .wireless-radio-led {
+        background: var(--udc-orange);
+        box-shadow: 0 0 7px color-mix(in srgb, var(--udc-orange) 68%, transparent);
+      }
+
+      .wireless-band-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .wireless-band-heading strong {
@@ -10448,8 +10999,9 @@ var UnifiDeviceCard = class extends HTMLElement {
         padding: 0 5px;
         place-items: center;
         border-radius: 999px;
-        color: color-mix(in srgb, var(--udc-accent) 82%, white 18%);
-        background: color-mix(in srgb, var(--udc-accent) 15%, transparent);
+        color: #eef3f8;
+        background: rgba(11, 15, 21, .34);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
         font-size: .67rem;
         font-variant-numeric: tabular-nums;
       }
@@ -10465,8 +11017,8 @@ var UnifiDeviceCard = class extends HTMLElement {
         overflow: hidden;
         padding: 3px 6px;
         border-radius: 6px;
-        color: var(--udc-value-color, var(--primary-text-color, var(--udc-text)));
-        background: color-mix(in srgb, var(--primary-text-color, #fff) 7%, transparent);
+        color: #f3f5f8;
+        background: rgba(10, 14, 19, .28);
         font-size: .64rem;
         line-height: 1.2;
         text-overflow: ellipsis;
@@ -10475,8 +11027,38 @@ var UnifiDeviceCard = class extends HTMLElement {
 
       .wireless-client-list .empty,
       .wireless-client-list .missing {
-        color: var(--udc-label-color, var(--secondary-text-color, var(--udc-muted)));
+        color: #c0c7d0;
         background: transparent;
+      }
+
+      ha-card.mode-dark .wireless-clients {
+        border-color: rgba(177, 190, 207, .18);
+        background: linear-gradient(180deg, #2b333e 0%, #202730 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.08),
+          inset 0 -1px 0 rgba(0,0,0,.28);
+      }
+
+      ha-card.mode-dark .wireless-clients-title {
+        color: var(--udc-label-color, #adb6c3);
+      }
+
+      ha-card.mode-dark .wireless-clients-title strong {
+        border-color: rgba(190, 202, 218, .18);
+        background: #121820;
+      }
+
+      ha-card.mode-dark .wireless-band {
+        border-color: rgba(5, 9, 14, .88);
+        background: linear-gradient(180deg, #343d49 0%, #202731 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.1),
+          inset 0 -2px 6px rgba(0,0,0,.42),
+          0 1px 0 rgba(255,255,255,.05);
+      }
+
+      ha-card.mode-dark .wireless-band.unknown {
+        border-color: rgba(242, 163, 26, .42);
       }
 
       .actions {
@@ -10607,6 +11189,10 @@ var UnifiDeviceCard = class extends HTMLElement {
           margin: 10px 11px 0;
         }
 
+        .hardware-stage.has-product-image {
+          margin: 10px 11px 0;
+        }
+
         .product-showcase.product-portrait {
           height: clamp(220px, 70cqi, 290px);
         }
@@ -10661,6 +11247,14 @@ var UnifiDeviceCard = class extends HTMLElement {
         .meta-row {
           max-width: 100%;
         }
+
+        .port-telemetry-notice {
+          grid-template-columns: auto minmax(0, 1fr);
+        }
+
+        .port-telemetry-notice button {
+          grid-column: 1 / -1;
+        }
       }
 
     </style>`;
@@ -10678,8 +11272,9 @@ var UnifiDeviceCard = class extends HTMLElement {
   }
   _renderPortDetail(selected, portClientIndex = null) {
     if (!selected) return `<div class="muted">${this._escapeHtml(this._t("no_ports"))}</div>`;
-    const linkUp = this._isPortConnected(selected);
-    const linkText = linkUp ? "connected" : "no_link";
+    const linkUp = this._isPortConnected(selected, portClientIndex);
+    const linkKnown = this._isPortStatusKnown(selected, portClientIndex);
+    const linkText = linkUp ? "connected" : linkKnown ? "no_link" : "port_status_unknown";
     const speedText = getPortSpeedText(this._hass, selected);
     const vlan = this._getPortVlan(selected);
     const poeStatus = getPoeStatus(this._hass, selected);
@@ -10697,8 +11292,8 @@ var UnifiDeviceCard = class extends HTMLElement {
       <div class="detail-grid">
         <div class="detail-item">
           <div class="detail-label">${this._escapeHtml(this._t("link_status"))}</div>
-          <div class="detail-value ${linkUp ? "online" : "offline"}">
-            ${this._escapeHtml(this._translateState(linkText) || (linkUp ? this._t("connected") : this._t("no_link")))}
+          <div class="detail-value ${linkUp ? "online" : linkKnown ? "offline" : "unknown"}">
+            ${this._escapeHtml(linkText === "port_status_unknown" ? this._t(linkText) : this._translateState(linkText) || (linkUp ? this._t("connected") : this._t("no_link")))}
           </div>
         </div>
         <div class="detail-item">
@@ -10804,7 +11399,6 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       const apStatusClass = apStatusRaw === "connected" ? "online" : apStatusRaw === "disconnected" ? "offline" : "pending";
       const uptime = this._apUptimeState(this._ctx?.uptime_entity);
       const wirelessClients = this._buildWirelessClientData();
-      const clients = wirelessClients.hasTotal ? String(wirelessClients.total) : this._wholeNumberState(this._ctx?.clients_entity);
       const apUplink = this._apUplinkText(this._ctx?.ap_uplink);
       const apUplinkTooltip = this._apUplinkTooltip(this._ctx?.ap_uplink);
       const { ledEntity, ledEnabled, ringColor } = this._apLedState();
@@ -10837,9 +11431,9 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       const headerMetrics2 = compactApView && !this._apCompactHeaderTelemetryEnabled() ? [] : this._headerMetrics();
       const escapedHeaderTitle2 = this._escapeHtml(headerTitle2);
       const escapedSubtitle2 = this._escapeHtml(this._subtitle());
-      const productImageHtml = this._renderProductImage("ap");
+      const productImageHtml2 = this._renderProductImage("ap");
       this.shadowRoot.innerHTML = `${this._styles()}
-        <ha-card class="ap-card ${compactApView ? "compact" : ""}" style="--udc-card-bg: ${this._cardBgStyle()}; --udc-chrome-bg: ${this._cardChromeBgStyle()}; --ap-ring-color: ${ringColor}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+        <ha-card class="ap-card ${compactApView ? "compact" : ""} ${this._appearanceModeClass()}" style="--udc-card-bg: ${this._cardBgStyle()}; --udc-chrome-bg: ${this._cardChromeBgStyle()}; --ap-ring-color: ${ringColor}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
           <div class="header">
             <div class="header-info">
               ${headerTitle2 ? `<div class="title">${escapedHeaderTitle2}</div>` : ""}
@@ -10856,8 +11450,8 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
             </div>
           </div>
 
-          <div class="ap-layout ${compactApView ? "compact" : ""}${this._integratedPortsEnabled(this._ctx) && this._ctx?.numberedPorts?.length ? " has-integrated-ports" : ""}${productImageHtml ? " has-product-image" : ""}">
-            ${productImageHtml || `
+          <div class="ap-layout ${compactApView ? "compact" : ""}${this._integratedPortsEnabled(this._ctx) && this._ctx?.numberedPorts?.length ? " has-integrated-ports" : ""}${productImageHtml2 ? " has-product-image" : ""}">
+            ${productImageHtml2 || `
             <div class="frontpanel ${renderedApStyle}">
               ${isFiveGBackup ? `
               <div class="ap-device ap-5g-device">
@@ -10901,23 +11495,10 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
                   <div class="detail-label">${this._escapeHtml(this._t("ap_status"))}</div>
                   <div class="detail-value ${apStatusClass}">${this._escapeHtml(apStatus || (online ? this._t("state_connected") : this._t("state_disconnected")))}</div>
                 </div>
-                ${compactApView ? `
-                <div class="detail-item">
-                  <div class="detail-label">${this._escapeHtml(this._t("wlan_clients"))}</div>
-                  <div class="detail-value">${this._escapeHtml(clients)}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">${this._escapeHtml(this._t("uptime"))}</div>
-                  <div class="detail-value">${this._escapeHtml(uptime)}</div>
-                </div>` : `
                 <div class="detail-item">
                   <div class="detail-label">${this._escapeHtml(this._t("uptime"))}</div>
                   <div class="detail-value">${this._escapeHtml(uptime)}</div>
                 </div>
-                <div class="detail-item">
-                  <div class="detail-label">${this._escapeHtml(this._t("wlan_clients"))}</div>
-                  <div class="detail-value">${this._escapeHtml(clients)}</div>
-                </div>`}
                 ${apUplink ? `
                 <div class="detail-item">
                   <div class="detail-label">${this._escapeHtml(this._t("uplink"))}</div>
@@ -10944,8 +11525,9 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       slotData.numbered
     );
     const allSlots = [...allSpecials, ...normalizedNumbered];
+    const portClientIndex = this._buildPortClientIndex();
     const selected = allSlots.find((p) => p.key === this._selectedKey) || (this._config?.dynamic_port_details === true ? null : allSlots[0]) || null;
-    const connected = this._connectedCount(allSlots);
+    const portStatus = this._portStatusSummary(allSlots, portClientIndex);
     const layoutTheme = ctx?.layout?.theme;
     const theme = this._safeClassToken(layoutTheme || "dark", "dark");
     const frontStyle = this._safeClassToken(ctx?.layout?.frontStyle || "single-row", "single-row");
@@ -10955,7 +11537,6 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     );
     const visibleNumbered = normalizedNumbered.filter((slot) => !specialPortsInUse.has(slot.port));
     const reverseFrontpanel = this._rotate180Enabled(ctx);
-    const portClientIndex = this._buildPortClientIndex();
     const oddEvenRows = this._shouldUseOddEvenRows(ctx, visibleNumbered);
     const baseRowsRaw = this._buildEffectiveRows(ctx, visibleNumbered);
     const baseRows = oddEvenRows ? this._applyOddEvenRows(baseRowsRaw) : baseRowsRaw;
@@ -10991,8 +11572,9 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     const panelContentHtml = panelPortsHtml || `<div class="muted" style="padding:8px 0">${this._escapeHtml(this._t("no_ports"))}</div>`;
     let detail = `<div class="muted">${this._escapeHtml(this._t("no_ports"))}</div>`;
     if (selected) {
-      const linkUp = this._isPortConnected(selected);
-      const linkText = linkUp ? "connected" : "no_link";
+      const linkUp = this._isPortConnected(selected, portClientIndex);
+      const linkKnown = this._isPortStatusKnown(selected, portClientIndex);
+      const linkText = linkUp ? "connected" : linkKnown ? "no_link" : "port_status_unknown";
       const speedText = getPortSpeedText(this._hass, selected);
       const vlan = this._getPortVlan(selected);
       const clientInfo = this._getMergedPortClientInfo(selected, portClientIndex);
@@ -11010,8 +11592,8 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
         <div class="detail-grid">
           <div class="detail-item">
             <div class="detail-label">${this._escapeHtml(this._t("link_status"))}</div>
-            <div class="detail-value ${linkUp ? "online" : "offline"}">
-              ${this._escapeHtml(this._translateState(linkText) || (linkUp ? this._t("connected") : this._t("no_link")))}
+            <div class="detail-value ${linkUp ? "online" : linkKnown ? "offline" : "unknown"}">
+              ${this._escapeHtml(linkText === "port_status_unknown" ? this._t(linkText) : this._translateState(linkText) || (linkUp ? this._t("connected") : this._t("no_link")))}
             </div>
           </div>
           <div class="detail-item">
@@ -11069,20 +11651,23 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     const integratedWirelessClients = ctx?.layout?.supportsIntegratedWifi ? this._buildWirelessClientData() : null;
     const wirelessClientSection = integratedWirelessClients?.hasTotal ? `
       <div class="section wireless-client-section">
-        <div class="detail-grid">
-          <div class="detail-item">
-            <div class="detail-label">${this._escapeHtml(this._t("wlan_clients"))}</div>
-            <div class="detail-value">${this._escapeHtml(integratedWirelessClients.total)}</div>
-          </div>
-        </div>
         ${this._renderWirelessClientBands(integratedWirelessClients)}
       </div>` : "";
     const headerTitle = this._title();
     const headerMetrics = this._headerMetrics();
+    const productImageHtml = this._renderProductImage("network");
+    const portTelemetryNoticeHtml = !portStatus.complete && this._ctx?.fake_device !== true ? `<div class="port-telemetry-notice" role="note">
+          <span class="port-telemetry-icon" aria-hidden="true">i</span>
+          <span class="port-telemetry-copy">
+            <strong>${this._escapeHtml(this._t("port_status_unknown"))}</strong>
+            <small>${this._escapeHtml(this._t("speed_disabled"))}</small>
+          </span>
+          <button type="button" data-action="open-device">${this._escapeHtml(this._t("open_device_entities"))}</button>
+        </div>` : "";
     const escapedHeaderTitle = this._escapeHtml(headerTitle);
     const escapedSubtitle = this._escapeHtml(this._subtitle());
     this.shadowRoot.innerHTML = `${this._styles()}
-      <ha-card style="--udc-card-bg: ${this._cardBgStyle()}; --udc-chrome-bg: ${this._cardChromeBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+      <ha-card class="${this._appearanceModeClass()}" style="--udc-card-bg: ${this._cardBgStyle()}; --udc-chrome-bg: ${this._cardChromeBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
         <div class="header">
           <div class="header-info">
             ${headerTitle ? `<div class="title">${escapedHeaderTitle}</div>` : ""}
@@ -11095,15 +11680,17 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           </div>
           <div class="header-actions">
             ${ctx?.reboot_entity ? `<button class="chip compact" data-action="reboot-device">\u21BB ${this._escapeHtml(this._t("reboot"))}</button>` : ""}
-            <div class="chip connection-chip ${connected > 0 ? "active" : "idle"}" role="status"><div class="dot"></div>${this._escapeHtml(`${connected}/${allSlots.length}`)}</div>
+            <div class="chip connection-chip ${portStatus.connected > 0 ? "active" : portStatus.complete ? "idle" : "unknown"}" role="status" title="${this._escapeAttr(portStatus.complete ? "" : this._t("port_status_unknown"))}"><div class="dot"></div>${this._escapeHtml(portStatus.label)}</div>
           </div>
         </div>
 
-        ${this._renderProductImage("network")}
-
-        <div class="frontpanel ${frontStyle} theme-${theme}${showPanel ? "" : " no-panel-bg"}${reverseFrontpanel ? " rotate180-enabled" : ""}">
-          <div class="panel-label">${this._escapeHtml(this._t("front_panel"))}</div>
-          ${panelContentHtml}
+        <div class="hardware-stage${productImageHtml ? " has-product-image" : ""}">
+          ${productImageHtml}
+          <div class="frontpanel ${frontStyle} theme-${theme}${showPanel ? "" : " no-panel-bg"}${reverseFrontpanel ? " rotate180-enabled" : ""}">
+            <div class="panel-label">${this._escapeHtml(this._t("front_panel"))}</div>
+            ${portTelemetryNoticeHtml}
+            ${panelContentHtml}
+          </div>
         </div>
 
         ${selected || this._config?.dynamic_port_details !== true ? `<div class="section">${detail}</div>` : ""}
@@ -11133,7 +11720,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     const escapedSubtitle = this._escapeHtml(this._subtitle());
     if (!this._config?.device_id) {
       this.shadowRoot.innerHTML = `${this._styles()}
-        <ha-card style="--udc-card-bg: ${this._cardBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+        <ha-card class="${this._appearanceModeClass()}" style="--udc-card-bg: ${this._cardBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
           <div class="header">
             <div class="header-info">
               ${title ? `<div class="title">${escapedTitle}</div>` : ""}
@@ -11147,7 +11734,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     }
     if (this._loading) {
       this.shadowRoot.innerHTML = `${this._styles()}
-        <ha-card style="--udc-card-bg: ${this._cardBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+        <ha-card class="${this._appearanceModeClass()}" style="--udc-card-bg: ${this._cardBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
           <div class="header">
             <div class="header-info">
               ${title ? `<div class="title">${escapedTitle}</div>` : ""}
@@ -11161,7 +11748,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     }
     if (!this._ctx) {
       this.shadowRoot.innerHTML = `${this._styles()}
-        <ha-card style="--udc-card-bg: ${this._cardBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
+        <ha-card class="${this._appearanceModeClass()}" style="--udc-card-bg: ${this._cardBgStyle()}; --udc-port-size: ${this._effectivePortSize()}px; --udc-ap-scale: ${this._apScale() / 100}${this._customColorVars()}">
           <div class="header">
             <div class="header-info">
               ${title ? `<div class="title">${escapedTitle}</div>` : ""}
