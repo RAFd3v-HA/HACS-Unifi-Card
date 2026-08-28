@@ -1,14 +1,25 @@
-# UniFi Device Card – lokale Installation
+# Installation über HACS
 
-Diese ZIP enthält die gebaute Home-Assistant-Frontendkarte aus dem aktuellen lokalen Entwicklungsstand.
+Dieses Repository enthält eine Home-Assistant-Dashboardkarte. Sie wird in HACS
+als **Dashboard** hinzugefügt, nicht als Integration.
 
-1. `unifi-device-card.js` nach `/config/www/unifi-device-card.js` kopieren.
-2. In Home Assistant **Einstellungen → Dashboards → Ressourcen** öffnen.
-3. `/local/unifi-device-card.js` als **JavaScript-Modul** hinzufügen.
-4. Home Assistant bzw. den Browser-Frontend-Cache neu laden.
+1. HACS in Home Assistant öffnen.
+2. **Dashboard** öffnen.
+3. Rechts oben **⋮ → Benutzerdefinierte Repositories** auswählen.
+4. Als Repository eintragen:
+   `https://github.com/RAFd3v-HA/HACS-Unifi-Card`
+5. Kategorie **Dashboard** auswählen und hinzufügen.
+6. Nach **UniFi Device Card** suchen und **Herunterladen** wählen.
+7. Home Assistant beziehungsweise den Browser-Cache neu laden.
 
-Kartentyp: `custom:unifi-device-card`
+HACS installiert `unifi-device-card.js` nach
+`/config/www/community/HACS-Unifi-Card/`. Die Ressource ist anschließend unter
+`/hacsfiles/HACS-Unifi-Card/unifi-device-card.js` verfügbar und wird von HACS
+normalerweise automatisch registriert.
 
-Für eine reguläre HACS-Installation stattdessen das Repository
-`https://github.com/bluenazgul/unifi-device-card` als benutzerdefiniertes
-Dashboard-Repository hinzufügen. HACS importiert keine lokale ZIP-Datei.
+Kartentyp:
+
+```yaml
+type: custom:unifi-device-card
+device_id: DEINE_DEVICE_ID
+```
