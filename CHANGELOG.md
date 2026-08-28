@@ -3,6 +3,7 @@
 ## [v0.8.4]
 
 ### 🐛 Bug Fixes
+- Show a precise partial-status notice when only some ports have usable link telemetry, keep the header counter in the familiar `connected/total` format without a `≥` prefix, and explain the remaining uncertainty in its tooltip.
 - Stop reporting `0 / total` when Home Assistant exposes the hardware layout but no usable per-port link states. Unknown and partially observed status is now represented explicitly, hidden entities with live states remain usable, and connected-client evidence can mark a port active.
 - Recognize the Cloud Gateway Fiber hardware identifiers `UDMA6A8` and `UCGF` as `UCGFIBER`, restoring its official front/rear product artwork and seven-port hardware layout in Home Assistant.
 - Recognize the `UACCMPOEAF` model identifier reported by the UniFi Network integration as a Device Bridge (`UDB`) instead of rendering it as a generic round access point, and expose its discovered Ethernet/PoE port controls.

@@ -4004,6 +4004,9 @@ var TRANSLATIONS = {
     // Hints
     speed_disabled: "Speed entity disabled \u2014 enable it in HA to show link speed.",
     port_status_unknown: "Port status unavailable",
+    port_status_partial: "Port status partially available",
+    port_status_partial_detail: "{unknown} of {total} ports have no usable link or speed status.",
+    port_status_partial_summary: "At least {connected} of {total} ports are connected; {unknown} port statuses are unknown.",
     open_device_entities: "Open device entities",
     telemetry_unavailable_title: "Telemetry not available",
     telemetry_unavailable_body: "The selected device does not provide the following telemetry data, so these values are not shown in the header.",
@@ -4237,6 +4240,9 @@ var TRANSLATIONS = {
     // Hints
     speed_disabled: "Speed-Entity deaktiviert \u2014 in HA aktivieren f\xFCr Geschwindigkeitsanzeige.",
     port_status_unknown: "Portstatus nicht verf\xFCgbar",
+    port_status_partial: "Portstatus teilweise verf\xFCgbar",
+    port_status_partial_detail: "F\xFCr {unknown} von {total} Ports fehlt ein auswertbarer Link- oder Speed-Status.",
+    port_status_partial_summary: "Mindestens {connected} von {total} Ports sind verbunden; bei {unknown} fehlt ein auswertbarer Status.",
     open_device_entities: "Ger\xE4te-Entities \xF6ffnen",
     telemetry_unavailable_title: "Telemetrie nicht verf\xFCgbar",
     telemetry_unavailable_body: "Das ausgew\xE4hlte Ger\xE4t stellt die folgenden Telemetriedaten nicht bereit. Diese Werte werden daher nicht im Header angezeigt.",
@@ -4459,6 +4465,9 @@ var TRANSLATIONS = {
     // Hints
     speed_disabled: "Snelheidsentiteit uitgeschakeld \u2014 schakel in HA in om linksnelheid te tonen.",
     port_status_unknown: "Poortstatus niet beschikbaar",
+    port_status_partial: "Poortstatus gedeeltelijk beschikbaar",
+    port_status_partial_detail: "Voor {unknown} van {total} poorten ontbreekt een bruikbare link- of snelheidsstatus.",
+    port_status_partial_summary: "Minstens {connected} van {total} poorten zijn verbonden; bij {unknown} ontbreekt een bruikbare status.",
     open_device_entities: "Apparaatentiteiten openen",
     telemetry_unavailable_title: "Telemetrie niet beschikbaar",
     telemetry_unavailable_body: "Het geselecteerde apparaat levert de volgende telemetriegegevens niet, daarom worden deze waarden niet in de kop getoond.",
@@ -4677,6 +4686,9 @@ var TRANSLATIONS = {
     // Hints
     speed_disabled: "Entit\xE9 de vitesse d\xE9sactiv\xE9e \u2014 activez-la dans HA pour afficher la vitesse.",
     port_status_unknown: "\xC9tat des ports indisponible",
+    port_status_partial: "\xC9tat des ports partiellement disponible",
+    port_status_partial_detail: "{unknown} ports sur {total} n\u2019ont aucun \xE9tat de lien ou de vitesse exploitable.",
+    port_status_partial_summary: "Au moins {connected} ports sur {total} sont connect\xE9s ; l\u2019\xE9tat de {unknown} ports est inconnu.",
     open_device_entities: "Ouvrir les entit\xE9s de l\u2019appareil",
     telemetry_unavailable_title: "T\xE9l\xE9m\xE9trie non disponible",
     telemetry_unavailable_body: "L'appareil s\xE9lectionn\xE9 ne fournit pas les donn\xE9es de t\xE9l\xE9m\xE9trie suivantes ; ces valeurs ne sont donc pas affich\xE9es dans l'en-t\xEAte.",
@@ -4895,6 +4907,9 @@ var TRANSLATIONS = {
     // Hints
     speed_disabled: "Entidad de velocidad deshabilitada \u2014 act\xEDvala en HA para mostrar la velocidad de enlace.",
     port_status_unknown: "Estado de puertos no disponible",
+    port_status_partial: "Estado de puertos parcialmente disponible",
+    port_status_partial_detail: "{unknown} de {total} puertos no tienen un estado de enlace o velocidad utilizable.",
+    port_status_partial_summary: "Al menos {connected} de {total} puertos est\xE1n conectados; se desconoce el estado de {unknown}.",
     open_device_entities: "Abrir entidades del dispositivo",
     telemetry_unavailable_title: "Telemetr\xEDa no disponible",
     telemetry_unavailable_body: "El dispositivo seleccionado no proporciona los siguientes datos de telemetr\xEDa, por lo que estos valores no se muestran en el encabezado.",
@@ -5113,6 +5128,9 @@ var TRANSLATIONS = {
     // Hints
     speed_disabled: "Entit\xE0 velocit\xE0 disabilitata \u2014 abilitala in HA per mostrare la velocit\xE0 del link.",
     port_status_unknown: "Stato porte non disponibile",
+    port_status_partial: "Stato porte parzialmente disponibile",
+    port_status_partial_detail: "Per {unknown} porte su {total} manca uno stato link o velocit\xE0 utilizzabile.",
+    port_status_partial_summary: "Almeno {connected} porte su {total} sono connesse; lo stato di {unknown} \xE8 sconosciuto.",
     open_device_entities: "Apri entit\xE0 del dispositivo",
     telemetry_unavailable_title: "Telemetria non disponibile",
     telemetry_unavailable_body: "Il dispositivo selezionato non fornisce i seguenti dati di telemetria, quindi questi valori non vengono mostrati nell\u2019header.",
@@ -8713,9 +8731,10 @@ var UnifiDeviceCard = class extends HTMLElement {
     const total = allSlots.length;
     const connected = this._connectedCount(allSlots, portClientIndex);
     const known = allSlots.filter((slot) => this._isPortStatusKnown(slot, portClientIndex)).length;
+    const unknown = Math.max(0, total - known);
     const complete = total === 0 || known === total;
-    const label = complete ? `${connected}/${total}` : connected > 0 ? `\u2265${connected}/${total}` : `\u2014/${total}`;
-    return { total, connected, known, complete, label };
+    const label = `${connected}/${total}`;
+    return { total, connected, known, unknown, complete, label };
   }
   _isDeviceOnline() {
     const onlineEntity = this._ctx?.online_entity;
@@ -9302,10 +9321,12 @@ var UnifiDeviceCard = class extends HTMLElement {
         opacity: .78;
       }
 
+      .connection-chip.partial,
       .connection-chip.unknown {
         opacity: .86;
       }
 
+      .connection-chip.partial .dot,
       .connection-chip.unknown .dot {
         background: var(--warning-color, #d79a28);
         box-shadow: 0 0 6px color-mix(in srgb, var(--warning-color, #d79a28) 58%, transparent);
@@ -9463,6 +9484,21 @@ var UnifiDeviceCard = class extends HTMLElement {
       .port-telemetry-notice button:hover,
       .port-telemetry-notice button:focus-visible {
         background: rgba(255,255,255,.92);
+      }
+
+      .port-telemetry-notice.partial {
+        border-color: color-mix(in srgb, var(--udc-accent) 32%, rgba(80, 88, 99, .2));
+        background: color-mix(in srgb, var(--udc-accent) 8%, rgba(255,255,255,.56));
+      }
+
+      .port-telemetry-notice.partial .port-telemetry-icon {
+        background: color-mix(in srgb, var(--udc-accent) 14%, transparent);
+        color: color-mix(in srgb, var(--udc-accent) 78%, #354052);
+      }
+
+      ha-card.mode-dark .port-telemetry-notice.partial {
+        border-color: color-mix(in srgb, var(--udc-accent) 38%, transparent);
+        background: color-mix(in srgb, var(--udc-accent) 10%, transparent);
       }
 
       .special-row {
@@ -11656,11 +11692,15 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     const headerTitle = this._title();
     const headerMetrics = this._headerMetrics();
     const productImageHtml = this._renderProductImage("network");
-    const portTelemetryNoticeHtml = !portStatus.complete && this._ctx?.fake_device !== true ? `<div class="port-telemetry-notice" role="note">
+    const portStatusPartial = !portStatus.complete && portStatus.known > 0;
+    const portStatusNoticeTitle = portStatusPartial ? this._t("port_status_partial") : this._t("port_status_unknown");
+    const portStatusNoticeBody = portStatusPartial ? this._t("port_status_partial_detail").replace("{unknown}", String(portStatus.unknown)).replace("{total}", String(portStatus.total)) : this._t("speed_disabled");
+    const portStatusTooltip = portStatus.complete ? "" : portStatusPartial && portStatus.connected > 0 ? this._t("port_status_partial_summary").replace("{connected}", String(portStatus.connected)).replace("{total}", String(portStatus.total)).replace("{unknown}", String(portStatus.unknown)) : portStatusNoticeBody;
+    const portTelemetryNoticeHtml = !portStatus.complete && this._ctx?.fake_device !== true ? `<div class="port-telemetry-notice${portStatusPartial ? " partial" : ""}" role="note">
           <span class="port-telemetry-icon" aria-hidden="true">i</span>
           <span class="port-telemetry-copy">
-            <strong>${this._escapeHtml(this._t("port_status_unknown"))}</strong>
-            <small>${this._escapeHtml(this._t("speed_disabled"))}</small>
+            <strong>${this._escapeHtml(portStatusNoticeTitle)}</strong>
+            <small>${this._escapeHtml(portStatusNoticeBody)}</small>
           </span>
           <button type="button" data-action="open-device">${this._escapeHtml(this._t("open_device_entities"))}</button>
         </div>` : "";
@@ -11680,7 +11720,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           </div>
           <div class="header-actions">
             ${ctx?.reboot_entity ? `<button class="chip compact" data-action="reboot-device">\u21BB ${this._escapeHtml(this._t("reboot"))}</button>` : ""}
-            <div class="chip connection-chip ${portStatus.connected > 0 ? "active" : portStatus.complete ? "idle" : "unknown"}" role="status" title="${this._escapeAttr(portStatus.complete ? "" : this._t("port_status_unknown"))}"><div class="dot"></div>${this._escapeHtml(portStatus.label)}</div>
+            <div class="chip connection-chip ${portStatus.complete ? portStatus.connected > 0 ? "active" : "idle" : portStatusPartial ? "partial" : "unknown"}" role="status" title="${this._escapeAttr(portStatusTooltip)}"><div class="dot"></div>${this._escapeHtml(portStatus.label)}</div>
           </div>
         </div>
 
