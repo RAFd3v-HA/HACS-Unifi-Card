@@ -11885,7 +11885,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     const portStatusNoticeTitle = portStatusPartial ? this._t("port_status_partial") : this._t("port_status_unknown");
     const portStatusNoticeBody = portStatusPartial ? this._t("port_status_partial_detail").replace("{unknown}", String(portStatus.unknown)).replace("{total}", String(portStatus.total)) : this._t("speed_disabled");
     const portStatusTooltip = portStatus.complete ? "" : portStatusPartial && portStatus.connected > 0 ? this._t("port_status_partial_summary").replace("{connected}", String(portStatus.connected)).replace("{total}", String(portStatus.total)).replace("{unknown}", String(portStatus.unknown)) : portStatusNoticeBody;
-    const portTelemetryNoticeHtml = !portStatus.complete && this._ctx?.fake_device !== true ? `<div class="port-telemetry-notice${portStatusPartial ? " partial" : ""}" role="note">
+    const portTelemetryNoticeHtml = !portStatus.complete && !this._isDeviceOnline() && portStatus.connected === 0 && this._ctx?.fake_device !== true ? `<div class="port-telemetry-notice${portStatusPartial ? " partial" : ""}" role="note">
           <span class="port-telemetry-icon" aria-hidden="true">i</span>
           <span class="port-telemetry-copy">
             <strong>${this._escapeHtml(portStatusNoticeTitle)}</strong>

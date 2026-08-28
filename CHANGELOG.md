@@ -3,6 +3,7 @@
 ## [v0.8.4]
 
 ### 🐛 Bug Fixes
+- Fix the optional companion backend failing to load because its local `websocket_api.py` shadowed Home Assistant's WebSocket API module; suppress the partial-port notice while an online switch is still reporting usable ports.
 - Declare the dashboard bundle filename explicitly in `hacs.json`, so forks whose repository name differs from `unifi-device-card` still install the correct frontend resource through HACS.
 - Show a precise partial-status notice when only some ports have usable link telemetry, keep the header counter in the familiar `connected/total` format without a `≥` prefix, and explain the remaining uncertainty in its tooltip.
 - Stop reporting `0 / total` when Home Assistant exposes the hardware layout but no usable per-port link states. Unknown and partially observed status is now represented explicitly, hidden entities with live states remain usable, and connected-client evidence can mark a port active.
