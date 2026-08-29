@@ -9552,6 +9552,10 @@ var UnifiDeviceCard = class extends HTMLElement {
           0 12px 30px rgba(3, 9, 20, .14);
       }
 
+      .hardware-stage.has-product-image:last-child {
+        margin-bottom: 14px;
+      }
+
       .hardware-stage.has-product-image > .product-showcase.network-product {
         width: auto;
         height: clamp(132px, 20cqi, 192px);
@@ -11734,6 +11738,10 @@ var UnifiDeviceCard = class extends HTMLElement {
 
         .hardware-stage.has-product-image {
           margin: 10px 11px 0;
+        }
+
+        .hardware-stage.has-product-image:last-child {
+          margin-bottom: 11px;
         }
 
         .product-showcase.product-portrait {
