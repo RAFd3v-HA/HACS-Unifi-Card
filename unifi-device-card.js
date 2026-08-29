@@ -2569,14 +2569,27 @@ function findDeviceStatEntity(entities, stat) {
   return null;
 }
 function getDeviceStatEntities(entities) {
-  let ledSwitchEntity = null;
+  const lightEntities = (entities || []).filter(
+    (entity) => lower(entity?.entity_id).startsWith("light.")
+  );
+  const officialLedEntity = lightEntities.find((entity) => {
+    const translationKey = lower(entity?.translation_key);
+    const uniqueId = lower(entity?.unique_id);
+    return translationKey === "led_control" || /^led[-_:]/.test(uniqueId);
+  });
+  const fallbackLedEntity = lightEntities.find((entity) => {
+    const text = canonicalStatText([
+      entity?.entity_id,
+      entity?.translation_key,
+      entity?.original_name,
+      entity?.name
+    ].filter(Boolean).join(" "));
+    return text.split("_").some((token) => token === "led" || token === "indicator");
+  });
+  let ledSwitchEntity = officialLedEntity?.entity_id || fallbackLedEntity?.entity_id || null;
   let ledColorEntity = null;
   for (const entity of entities || []) {
     const id = lower(entity.entity_id);
-    const tk = lower(entity.translation_key || "");
-    if (!ledSwitchEntity && id.startsWith("light.") && (id.includes("led") || id.includes("indicator") || tk.includes("led") || tk.includes("indicator"))) {
-      ledSwitchEntity = entity.entity_id;
-    }
     if (!id.startsWith("sensor.")) continue;
     if (!ledColorEntity && (id.includes("led_color") || id.includes("led_colour") || id.includes("indicator_color") || id.includes("indicator_colour"))) {
       ledColorEntity = entity.entity_id;
@@ -4004,6 +4017,20 @@ var TRANSLATIONS = {
     reboot: "Reboot",
     led_on: "LED On",
     led_off: "LED Off",
+    led_error: "LED control failed.",
+    led_unavailable: "LED control unavailable.",
+    etherlighting: "Etherlighting",
+    etherlighting_hint: "Use the switch's native port-lighting mode.",
+    etherlighting_on: "Etherlighting on",
+    etherlighting_off: "Etherlighting off",
+    etherlighting_mode: "Mode",
+    etherlighting_mode_speed: "Speed",
+    etherlighting_mode_network: "Network",
+    etherlighting_behavior: "Behavior",
+    etherlighting_behavior_steady: "Steady",
+    etherlighting_behavior_breath: "Breathing",
+    etherlighting_brightness: "Brightness",
+    etherlighting_error: "Etherlighting could not be updated.",
     // Hints
     speed_disabled: "Speed entity disabled \u2014 enable it in HA to show link speed.",
     port_status_unknown: "Port status unavailable",
@@ -4243,6 +4270,20 @@ var TRANSLATIONS = {
     reboot: "Neustart",
     led_on: "LED Ein",
     led_off: "LED Aus",
+    led_error: "LED-Steuerung fehlgeschlagen.",
+    led_unavailable: "LED-Steuerung nicht verf\xFCgbar.",
+    etherlighting: "Etherlighting",
+    etherlighting_hint: "Verwendet den nativen Portlicht-Modus des Switches.",
+    etherlighting_on: "Etherlighting ein",
+    etherlighting_off: "Etherlighting aus",
+    etherlighting_mode: "Modus",
+    etherlighting_mode_speed: "Geschwindigkeit",
+    etherlighting_mode_network: "Netzwerk",
+    etherlighting_behavior: "Verhalten",
+    etherlighting_behavior_steady: "Dauerlicht",
+    etherlighting_behavior_breath: "Atmen",
+    etherlighting_brightness: "Helligkeit",
+    etherlighting_error: "Etherlighting konnte nicht aktualisiert werden.",
     // Hints
     speed_disabled: "Speed-Entity deaktiviert \u2014 in HA aktivieren f\xFCr Geschwindigkeitsanzeige.",
     port_status_unknown: "Portstatus nicht verf\xFCgbar",
@@ -7145,6 +7186,7 @@ var CONTEXT_REFRESH_INTERVAL = 31e3;
 var BACKEND_REFRESH_INTERVAL = 15e3;
 var BACKEND_RETRY_INTERVAL = 6e4;
 var BACKEND_WS_TYPE = "unifi_device_card/port_clients";
+var BACKEND_ETHERLIGHTING_WS_TYPE = "unifi_device_card/set_etherlighting";
 var LOG_STYLES = {
   badge: "background:#00AEEF;color:#fff;padding:2px 6px;border-radius:2px;font-weight:700;",
   version: "background:#2a2a2a;color:#fff;padding:2px 6px;border-radius:2px;font-weight:700;",
@@ -7184,7 +7226,15 @@ var UnifiDeviceCard = class extends HTMLElement {
     this._backendLoadedAt = 0;
     this._backendLastAttemptAt = 0;
     this._backendLoading = false;
+    this._backendRequestToken = 0;
+    this._backendLoadingToken = 0;
     this._backendSupported = null;
+    this._etherlightingUpdating = false;
+    this._etherlightingError = "";
+    this._etherlightingRequestToken = 0;
+    this._ledUpdating = false;
+    this._ledError = "";
+    this._ledRequestToken = 0;
     this._sfpConnectedSeen = /* @__PURE__ */ new Set();
     this._handleEntityRegistryChanged = (event) => {
       if (event?.detail?.deviceId !== this._config?.device_id) return;
@@ -7370,12 +7420,20 @@ var UnifiDeviceCard = class extends HTMLElement {
     }
   }
   _resetBackendData() {
+    this._backendRequestToken += 1;
+    this._backendLoadingToken = 0;
+    this._etherlightingRequestToken += 1;
+    this._ledRequestToken += 1;
     this._backendData = null;
     this._backendDeviceMac = "";
     this._backendLoadedAt = 0;
     this._backendLastAttemptAt = 0;
     this._backendLoading = false;
     this._backendSupported = null;
+    this._etherlightingUpdating = false;
+    this._etherlightingError = "";
+    this._ledUpdating = false;
+    this._ledError = "";
   }
   async _ensureBackendData(force = false, render = true) {
     if (!this._hass || !this._ctx || this._ctx?.fake_device === true) return;
@@ -7388,6 +7446,8 @@ var UnifiDeviceCard = class extends HTMLElement {
     if (!force && sameDevice && this._backendData && refreshAge < BACKEND_REFRESH_INTERVAL) return;
     if (!force && this._backendSupported === false && retryAge < BACKEND_RETRY_INTERVAL) return;
     if (this._backendLoading) return;
+    const requestToken = ++this._backendRequestToken;
+    this._backendLoadingToken = requestToken;
     this._backendLoading = true;
     this._backendLastAttemptAt = now;
     try {
@@ -7395,7 +7455,7 @@ var UnifiDeviceCard = class extends HTMLElement {
         type: BACKEND_WS_TYPE,
         device_mac: deviceMac
       });
-      if (normalizeMac(this._ctx?.identity?.primary_mac) !== deviceMac) return;
+      if (requestToken !== this._backendRequestToken || normalizeMac(this._ctx?.identity?.primary_mac) !== deviceMac) return;
       this._backendData = response && typeof response === "object" ? response : null;
       this._backendDeviceMac = deviceMac;
       this._backendLoadedAt = Date.now();
@@ -7406,15 +7466,123 @@ var UnifiDeviceCard = class extends HTMLElement {
         clients: Array.isArray(response?.clients) ? response.clients.length : 0
       });
     } catch (err) {
-      if (normalizeMac(this._ctx?.identity?.primary_mac) !== deviceMac) return;
+      if (requestToken !== this._backendRequestToken || normalizeMac(this._ctx?.identity?.primary_mac) !== deviceMac) return;
       this._backendData = null;
       this._backendDeviceMac = deviceMac;
       this._backendLoadedAt = Date.now();
       this._backendSupported = false;
       this._log("debug", "companion backend unavailable; using entity fallback", err);
     } finally {
-      this._backendLoading = false;
-      if (render) this._render();
+      if (this._backendLoadingToken === requestToken) {
+        this._backendLoading = false;
+        this._backendLoadingToken = 0;
+      }
+      if (render && requestToken === this._backendRequestToken) this._render();
+    }
+  }
+  _etherlightingData() {
+    const value = this._backendData?.etherlighting;
+    return value?.supported === true ? value : null;
+  }
+  _renderEtherlightingControls() {
+    const data = this._etherlightingData();
+    if (!data) return "";
+    const ledMode = data.led_mode === "etherlighting" ? "etherlighting" : "standard";
+    const mode = data.mode === "network" ? "network" : "speed";
+    const behavior = data.behavior === "breath" ? "breath" : "steady";
+    const brightness = data.brightness != null && Number.isFinite(Number(data.brightness)) ? Math.max(1, Math.min(100, Number(data.brightness))) : 100;
+    const busy = this._etherlightingUpdating;
+    return `
+      <section class="etherlighting-panel" aria-label="${this._escapeAttr(this._t("etherlighting"))}">
+        <div class="etherlighting-heading">
+          <div>
+            <div class="section-title">${this._escapeHtml(this._t("etherlighting"))}</div>
+            <div class="muted">${this._escapeHtml(this._t("etherlighting_hint"))}</div>
+          </div>
+          <button type="button" class="chip compact etherlighting-toggle" data-action="toggle-etherlighting" aria-pressed="${ledMode === "etherlighting" ? "true" : "false"}" ${busy ? "disabled" : ""}>
+            <span class="led-indicator" style="--led-indicator: ${ledMode === "etherlighting" ? "#36d278" : "#868b93"}"></span>
+            ${this._escapeHtml(this._t(ledMode === "etherlighting" ? "etherlighting_on" : "etherlighting_off"))}
+          </button>
+        </div>
+        <div class="etherlighting-grid">
+          <label class="etherlighting-field">
+            <span>${this._escapeHtml(this._t("etherlighting_mode"))}</span>
+            <select data-action="etherlighting-mode" ${busy ? "disabled" : ""}>
+              <option value="speed" ${mode === "speed" ? "selected" : ""}>${this._escapeHtml(this._t("etherlighting_mode_speed"))}</option>
+              <option value="network" ${mode === "network" ? "selected" : ""}>${this._escapeHtml(this._t("etherlighting_mode_network"))}</option>
+            </select>
+          </label>
+          <label class="etherlighting-field">
+            <span>${this._escapeHtml(this._t("etherlighting_behavior"))}</span>
+            <select data-action="etherlighting-behavior" ${busy ? "disabled" : ""}>
+              <option value="steady" ${behavior === "steady" ? "selected" : ""}>${this._escapeHtml(this._t("etherlighting_behavior_steady"))}</option>
+              <option value="breath" ${behavior === "breath" ? "selected" : ""}>${this._escapeHtml(this._t("etherlighting_behavior_breath"))}</option>
+            </select>
+          </label>
+          <label class="etherlighting-field etherlighting-brightness">
+            <span>${this._escapeHtml(this._t("etherlighting_brightness"))}<output>${this._escapeHtml(`${brightness}%`)}</output></span>
+            <input data-action="etherlighting-brightness" type="range" min="1" max="100" step="1" value="${this._escapeAttr(brightness)}" ${busy ? "disabled" : ""}>
+          </label>
+        </div>
+        ${this._etherlightingError ? `<div class="etherlighting-error" role="status">${this._escapeHtml(this._etherlightingError)}</div>` : ""}
+      </section>`;
+  }
+  _attachEtherlightingHandlers() {
+    const toggle = this.shadowRoot.querySelector("[data-action='toggle-etherlighting']");
+    toggle?.addEventListener("click", () => {
+      const current = this._etherlightingData()?.led_mode === "etherlighting";
+      this._setEtherlighting({ led_mode: current ? "standard" : "etherlighting" });
+    });
+    this.shadowRoot.querySelector("[data-action='etherlighting-mode']")?.addEventListener("change", (event) => this._setEtherlighting({ mode: event.currentTarget.value }));
+    this.shadowRoot.querySelector("[data-action='etherlighting-behavior']")?.addEventListener("change", (event) => this._setEtherlighting({ behavior: event.currentTarget.value }));
+    const brightness = this.shadowRoot.querySelector("[data-action='etherlighting-brightness']");
+    brightness?.addEventListener("input", (event) => {
+      const output = event.currentTarget.parentElement?.querySelector("output");
+      if (output) output.textContent = `${event.currentTarget.value}%`;
+    });
+    brightness?.addEventListener("change", (event) => {
+      const value = Number.parseInt(event.currentTarget.value, 10);
+      if (Number.isFinite(value)) this._setEtherlighting({ brightness: value });
+    });
+  }
+  async _setEtherlighting(patch) {
+    if (this._etherlightingUpdating || !this._hass?.callWS || !this._etherlightingData()) return;
+    const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
+    if (!deviceMac) return;
+    const focusAction = this.shadowRoot?.activeElement?.dataset?.action || "";
+    const requestToken = ++this._etherlightingRequestToken;
+    this._backendRequestToken += 1;
+    this._etherlightingUpdating = true;
+    this._etherlightingError = "";
+    this._render();
+    try {
+      const response = await this._hass.callWS({
+        type: BACKEND_ETHERLIGHTING_WS_TYPE,
+        device_mac: deviceMac,
+        ...patch
+      });
+      if (requestToken !== this._etherlightingRequestToken || normalizeMac(this._ctx?.identity?.primary_mac) !== deviceMac || this._backendDeviceMac !== deviceMac) {
+        return;
+      }
+      if (response?.etherlighting?.supported !== true || !this._backendData) {
+        throw new Error("Invalid Etherlighting response");
+      }
+      this._backendData = { ...this._backendData, etherlighting: response.etherlighting };
+      this._backendLoadedAt = Date.now();
+    } catch (err) {
+      if (requestToken !== this._etherlightingRequestToken) return;
+      this._etherlightingError = this._t("etherlighting_error");
+      this._log("warn", "Etherlighting update failed", err);
+    } finally {
+      if (requestToken === this._etherlightingRequestToken) {
+        this._etherlightingUpdating = false;
+        this._render();
+        if (focusAction) {
+          requestAnimationFrame(() => {
+            this.shadowRoot?.querySelector(`[data-action="${focusAction}"]`)?.focus();
+          });
+        }
+      }
     }
   }
   _refreshTelemetrySelection(previousHass = null) {
@@ -7646,7 +7814,6 @@ var UnifiDeviceCard = class extends HTMLElement {
       return {
         src: customUrl,
         alt: `${this._ctx?.model || this._title() || "UniFi"} ${this._t("product_image")}`,
-        source: "",
         presentation: "auto",
         view: "front",
         hasRear: false
@@ -7664,7 +7831,6 @@ var UnifiDeviceCard = class extends HTMLElement {
     return {
       src,
       alt: `${official.name} \xB7 ${this._t(view === "rear" ? "product_rear" : "product_front")}`,
-      source: official.product,
       presentation,
       scale: Number.isFinite(official.scale) ? official.scale : defaultScale,
       view,
@@ -7676,7 +7842,6 @@ var UnifiDeviceCard = class extends HTMLElement {
     if (!productImage) return "";
     const presentation = this._safeClassToken(productImage.presentation, "auto");
     const variantClass = variant === "ap" ? "ap-product" : "network-product";
-    const officialLabel = this._t("product_image_official");
     const viewToggle = productImage.hasRear ? `
       <div class="product-view-toggle" role="group" aria-label="${this._escapeAttr(this._t("product_views"))}">
         <button type="button" data-product-view="front" aria-pressed="${productImage.view === "front" ? "true" : "false"}">${this._escapeHtml(this._t("product_front"))}</button>
@@ -7695,7 +7860,6 @@ var UnifiDeviceCard = class extends HTMLElement {
           style="--product-image-scale:${this._escapeAttr(productImage.scale || 1)}"
         >
         ${viewToggle}
-        ${productImage.source ? `<figcaption><a href="${this._escapeAttr(productImage.source)}" target="_blank" rel="noopener noreferrer" aria-label="${this._escapeAttr(officialLabel)}" title="${this._escapeAttr(officialLabel)}">Ubiquiti \u2197</a></figcaption>` : ""}
       </figure>`;
   }
   _attachProductImageHandler() {
@@ -7825,10 +7989,23 @@ var UnifiDeviceCard = class extends HTMLElement {
   }
   _apLedState() {
     const ledEntity = this._ctx?.led_switch_entity;
-    const ledEnabled = ledEntity ? isOn(this._hass, ledEntity) : this._isDeviceOnline();
+    const ledObj = ledEntity ? stateObj(this._hass, ledEntity) : null;
+    const ledRawState = String(ledObj?.state || "").trim().toLowerCase();
+    const ledAvailable = !!ledObj && !["", "unknown", "unavailable"].includes(ledRawState);
+    const ledEnabled = ledEntity && ledAvailable ? isOn(this._hass, ledEntity) : this._isDeviceOnline();
     const defaultColor = this._config?.ap_led_color || this._ctx?.layout?.apLedDefaultColor || "#0000ff";
     const ringColor = ledEnabled ? this._apLedColorValue() || defaultColor : "#868b93";
-    return { ledEntity, ledEnabled, ringColor };
+    return { ledEntity, ledEnabled, ledAvailable, ringColor };
+  }
+  _renderLedControl({ ledEntity, ledEnabled, ledAvailable, ringColor }) {
+    if (!ledEntity) return "";
+    const status = this._ledError || this._t(
+      ledAvailable ? ledEnabled ? "led_on" : "led_off" : "led_unavailable"
+    );
+    const disabled = this._ledUpdating || !ledAvailable;
+    return `
+      <button type="button" class="chip compact${this._ledError ? " control-error" : ""}" data-action="toggle-led" aria-pressed="${ledAvailable && ledEnabled ? "true" : "false"}" aria-busy="${this._ledUpdating ? "true" : "false"}" aria-label="${this._escapeAttr(`LED \xB7 ${status}`)}" style="--led-indicator: ${ledAvailable && ledEnabled ? ringColor : "#868b93"}" title="${this._escapeAttr(status)}" ${disabled ? "disabled" : ""}><span class="led-indicator"></span>LED</button>
+      ${this._ledError ? `<span class="header-control-error" role="status">${this._escapeHtml(this._ledError)}</span>` : ""}`;
   }
   _apUplinkText(uplink) {
     if (!uplink) return null;
@@ -7957,25 +8134,55 @@ var UnifiDeviceCard = class extends HTMLElement {
     const vlans = indexed?.vlans ? Array.from(indexed.vlans) : [];
     return count > 0 || names.length > 0 || clients.length > 0 ? { count, names, clients, vlans } : null;
   }
+  _getClientVlanValues(clientInfo) {
+    const values = [];
+    const seen = /* @__PURE__ */ new Set();
+    const add = (rawValue) => {
+      const vlan = this._normalizeVlanCandidate(rawValue, true);
+      if (!vlan?.value) return;
+      const value = String(vlan.value).trim();
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) return;
+      seen.add(key);
+      values.push(value);
+    };
+    for (const client of Array.isArray(clientInfo?.clients) ? clientInfo.clients : []) {
+      add(client?.vlan);
+    }
+    const indexedVlans = clientInfo?.vlans instanceof Set ? Array.from(clientInfo.vlans) : Array.isArray(clientInfo?.vlans) ? clientInfo.vlans : [];
+    for (const vlan of indexedVlans) add(vlan);
+    return values;
+  }
+  _clientInfoHasVlan(clientInfo) {
+    return this._getClientVlanValues(clientInfo).length > 0;
+  }
   _formatPortClientValue(clientInfo) {
     if (!clientInfo) return "";
+    const clientVlanValues = this._getClientVlanValues(clientInfo);
+    const formatVlanSuffix = (renderedVlanValues = /* @__PURE__ */ new Set()) => {
+      const missing = clientVlanValues.filter((value) => !renderedVlanValues.has(value.toLowerCase()));
+      return missing.length ? ` \xB7 ${missing.map((value) => `${this._t("vlan")} ${value}`).join(", ")}` : "";
+    };
     if (clientInfo.clients?.length) {
+      const renderedVlanValues = /* @__PURE__ */ new Set();
       const rows = clientInfo.clients.slice(0, 8).map((client) => {
+        const clientVlan = this._normalizeVlanCandidate(client?.vlan, true);
+        if (clientVlan?.value) renderedVlanValues.add(String(clientVlan.value).trim().toLowerCase());
         const details = [
           client?.name || client?.hostname || client?.mac,
           client?.ip,
-          client?.vlan != null ? `${this._t("vlan")} ${client.vlan}` : null
+          clientVlan?.value ? `${this._t("vlan")} ${clientVlan.value}` : null
         ].filter(Boolean);
         return details.join(" \xB7 ");
       });
       const remainder2 = Math.max(0, (clientInfo.count || 0) - rows.length);
-      return `${rows.join("; ")}${remainder2 ? ` (+${remainder2})` : ""}`;
+      return `${rows.join("; ")}${formatVlanSuffix(renderedVlanValues)}${remainder2 ? ` (+${remainder2})` : ""}`;
     }
     const remainder = Math.max(0, (clientInfo.count || 0) - (clientInfo.names?.length || 0));
     if (clientInfo.names?.length) {
-      return `${clientInfo.names.join(", ")}${remainder ? ` (+${remainder})` : ""}`;
+      return `${clientInfo.names.join(", ")}${formatVlanSuffix()}${remainder ? ` (+${remainder})` : ""}`;
     }
-    return clientInfo.count ? String(clientInfo.count) : "";
+    return clientInfo.count ? `${clientInfo.count}${formatVlanSuffix()}` : formatVlanSuffix().replace(/^ · /, "");
   }
   _backendPortInfo(slot, portClientIndex = null) {
     if (!Number.isInteger(slot?.port)) return null;
@@ -8734,7 +8941,44 @@ var UnifiDeviceCard = class extends HTMLElement {
     if (!entityId || !this._hass) return;
     const [domain] = entityId.split(".");
     this._log("debug", "toggle entity", entityId);
-    await this._hass.callService(domain, "toggle", { entity_id: entityId });
+    try {
+      await this._hass.callService(domain, "toggle", { entity_id: entityId });
+    } catch (err) {
+      this._log("warn", `Failed to toggle ${entityId}`, err);
+    }
+  }
+  async _setLedEntity(entityId, currentlyOn) {
+    if (!entityId || !this._hass || this._ledUpdating) return;
+    const state = stateObj(this._hass, entityId)?.state;
+    if (state == null || state === "unknown" || state === "unavailable") return;
+    const restoreFocus = this.shadowRoot?.activeElement?.dataset?.action === "toggle-led";
+    const requestToken = ++this._ledRequestToken;
+    const deviceId = this._config?.device_id || "";
+    const [domain] = entityId.split(".");
+    this._ledUpdating = true;
+    this._ledError = "";
+    this._render();
+    try {
+      await this._hass.callService(
+        domain,
+        currentlyOn ? "turn_off" : "turn_on",
+        { entity_id: entityId }
+      );
+    } catch (err) {
+      if (requestToken !== this._ledRequestToken) return;
+      this._ledError = this._t("led_error");
+      this._log("warn", `Failed to set ${entityId}`, err);
+    } finally {
+      if (requestToken === this._ledRequestToken && deviceId === (this._config?.device_id || "")) {
+        this._ledUpdating = false;
+        this._render();
+        if (restoreFocus) {
+          requestAnimationFrame(() => {
+            this.shadowRoot?.querySelector("[data-action='toggle-led']")?.focus();
+          });
+        }
+      }
+    }
   }
   async _pressButton(entityId) {
     if (!entityId || !this._hass) return;
@@ -9310,6 +9554,9 @@ var UnifiDeviceCard = class extends HTMLElement {
 
       .hardware-stage.has-product-image > .product-showcase.network-product {
         width: auto;
+        height: clamp(132px, 20cqi, 192px);
+        min-height: 132px;
+        max-height: 192px;
         margin: 0;
         border: 0;
         border-radius: 0;
@@ -9431,38 +9678,6 @@ var UnifiDeviceCard = class extends HTMLElement {
         outline-offset: 2px;
       }
 
-      .product-showcase figcaption {
-        position: absolute;
-        right: 9px;
-        bottom: 8px;
-        min-height: 28px;
-        display: flex;
-        align-items: center;
-        padding: 0 9px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,.18);
-        background: rgba(20, 23, 28, .76);
-        backdrop-filter: blur(10px);
-        font-size: .67rem;
-        font-weight: 650;
-      }
-
-      .product-showcase figcaption a {
-        color: #f8fafc;
-        text-decoration: none;
-      }
-
-      .product-showcase figcaption a:hover,
-      .product-showcase figcaption a:focus-visible {
-        text-decoration: underline;
-      }
-
-      .product-showcase figcaption a:focus-visible {
-        outline: 2px solid #fff;
-        outline-offset: 3px;
-        border-radius: 3px;
-      }
-
       .chip {
         display: flex;
         align-items: center;
@@ -9529,6 +9744,103 @@ var UnifiDeviceCard = class extends HTMLElement {
         border-radius: 50%;
         background: var(--led-indicator, #868b93);
         box-shadow: 0 0 6px color-mix(in srgb, var(--led-indicator, #868b93) 70%, transparent);
+      }
+
+      .chip.control-error {
+        border-color: color-mix(in srgb, var(--error-color, #db4437) 64%, var(--udc-border));
+      }
+
+      .header-control-error {
+        max-width: 150px;
+        color: var(--error-color, #db4437);
+        font-size: .61rem;
+        line-height: 1.2;
+      }
+
+      .etherlighting-panel {
+        margin: 12px 14px 0;
+        padding: 12px;
+        border: 1px solid color-mix(in srgb, var(--udc-accent) 30%, var(--udc-border));
+        border-radius: var(--udc-r);
+        background: color-mix(in srgb, var(--udc-chrome-bg, var(--udc-surface)) 88%, var(--udc-accent) 12%);
+        display: grid;
+        gap: 10px;
+      }
+
+      .etherlighting-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .etherlighting-heading .section-title {
+        margin: 0;
+      }
+
+      .etherlighting-heading .muted {
+        margin-top: 2px;
+        font-size: .68rem;
+      }
+
+      .etherlighting-toggle {
+        color: var(--udc-text);
+      }
+
+      .etherlighting-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .etherlighting-field {
+        display: grid;
+        gap: 5px;
+        min-width: 0;
+        color: var(--udc-muted);
+        font-size: .66rem;
+        font-weight: 650;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+      }
+
+      .etherlighting-field select,
+      .etherlighting-field input[type="range"] {
+        min-width: 0;
+        width: 100%;
+      }
+
+      .etherlighting-field select {
+        min-height: 32px;
+        padding: 5px 8px;
+        border: 1px solid var(--udc-border);
+        border-radius: var(--udc-rsm);
+        background: var(--udc-surf2);
+        color: var(--udc-text);
+        font: inherit;
+        font-size: .76rem;
+        text-transform: none;
+        letter-spacing: normal;
+      }
+
+      .etherlighting-field span {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .etherlighting-field output {
+        color: var(--udc-text);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .etherlighting-brightness {
+        grid-column: 1 / -1;
+      }
+
+      .etherlighting-error {
+        color: var(--error-color, #db4437);
+        font-size: .7rem;
       }
 
       @keyframes blink {
@@ -11024,6 +11336,10 @@ var UnifiDeviceCard = class extends HTMLElement {
         margin-bottom: 12px;
       }
 
+      .detail-grid.no-actions {
+        margin-bottom: 0;
+      }
+
       .detail-item {
         display: grid;
         align-content: center;
@@ -11460,6 +11776,18 @@ var UnifiDeviceCard = class extends HTMLElement {
         .section {
           padding: 12px;
         }
+
+        .etherlighting-panel {
+          margin: 10px 11px 0;
+        }
+
+        .etherlighting-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .etherlighting-brightness {
+          grid-column: auto;
+        }
       }
 
       @container unifi-device-card (max-width: 340px) {
@@ -11512,10 +11840,12 @@ var UnifiDeviceCard = class extends HTMLElement {
     const txVal = selected.tx_entity ? formatState(this._hass, selected.tx_entity) : null;
     const clientInfo = this._getMergedPortClientInfo(selected, portClientIndex);
     const clientValue = this._formatPortClientValue(clientInfo);
+    const showVlanTile = !!vlan && !this._clientInfoHasVlan(clientInfo);
+    const hasActions = !!(selected.port_switch_entity || selected.poe_switch_entity || selected.power_cycle_entity);
     const portTitle = selected.port_label || (selected.kind === "special" ? selected.label : `${this._t("port_label")} ${selected.label}`);
     return `
       <div class="detail-title">${this._escapeHtml(portTitle)}</div>
-      <div class="detail-grid">
+      <div class="detail-grid${hasActions ? "" : " no-actions"}">
         <div class="detail-item">
           <div class="detail-label">${this._escapeHtml(this._t("link_status"))}</div>
           <div class="detail-value ${linkUp ? "online" : linkKnown ? "offline" : "unknown"}">
@@ -11526,7 +11856,7 @@ var UnifiDeviceCard = class extends HTMLElement {
           <div class="detail-label">${this._escapeHtml(this._t("speed"))}</div>
           <div class="detail-value">${this._escapeHtml(speedText || "\u2014")}</div>
         </div>
-        ${vlan ? `
+        ${showVlanTile ? `
         <div class="detail-item">
           <div class="detail-label">${this._escapeHtml(this._t(vlan.source === "client" ? "client_vlan" : "vlan"))}</div>
           <div class="detail-value">${this._escapeHtml(vlan.value)}</div>
@@ -11558,7 +11888,7 @@ var UnifiDeviceCard = class extends HTMLElement {
           <div class="detail-value">${this._escapeHtml(txVal)}</div>
         </div>` : ""}
       </div>
-      <div class="actions">
+      ${hasActions ? `<div class="actions">
         ${selected.port_switch_entity ? (() => {
       const enabled = isOn(this._hass, selected.port_switch_entity);
       const confirmDisableAttr = enabled ? ` data-confirm-disable="true" data-port-name="${this._escapeAttr(portTitle)}"` : "";
@@ -11572,7 +11902,7 @@ var UnifiDeviceCard = class extends HTMLElement {
         ${selected.power_cycle_entity ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(selected.power_cycle_entity)}">
           \u21BA ${this._escapeHtml(this._t("power_cycle"))}
         </button>` : ""}
-      </div>`;
+      </div>` : ""}`;
   }
   _renderIntegratedPortSection(ctx) {
     if (!this._integratedPortsEnabled(ctx) || !ctx?.numberedPorts?.length) return "";
@@ -11627,7 +11957,9 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       const wirelessClients = this._buildWirelessClientData();
       const apUplink = this._apUplinkText(this._ctx?.ap_uplink);
       const apUplinkTooltip = this._apUplinkTooltip(this._ctx?.ap_uplink);
-      const { ledEntity, ledEnabled, ringColor } = this._apLedState();
+      const ledState2 = this._apLedState();
+      const { ledEntity: ledEntity2, ledEnabled: ledEnabled2, ledAvailable: ledAvailable2 } = ledState2;
+      const { ringColor } = ledState2;
       const isFiveGBackup = this._ctx?.layout?.frontStyle === "ap-5g-backup";
       const apFrontStyle = this._ctx?.layout?.apFrontStyle || this._ctx?.layout?.frontStyle;
       const isInWallAp = apFrontStyle === "ap-in-wall";
@@ -11672,7 +12004,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
             </div>
             <div class="header-actions">
               ${this._ctx?.reboot_entity ? `<button class="chip compact" data-action="reboot-device">\u21BB ${this._escapeHtml(this._t("reboot"))}</button>` : ""}
-              ${ledEntity ? `<button class="chip compact" data-action="toggle-led" style="--led-indicator: ${ledEnabled ? ringColor : "#868b93"}"><span class="led-indicator"></span>LED</button>` : ""}
+              ${this._renderLedControl(ledState2)}
             </div>
           </div>
 
@@ -11697,19 +12029,19 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
                 <div class="ap-5g-label">UniFi 5G</div>
               </div>` : isInWallAp ? `
               <div class="ap-device ap-in-wall-device">
-                <div class="ap-in-wall-led ${ledEnabled ? "" : "off"}"></div>
+                <div class="ap-in-wall-led ${ledEnabled2 ? "" : "off"}"></div>
                 <div class="ap-in-wall-logo">U</div>
               </div>` : isU7Outdoor ? `
               <div class="ap-device ap-u7-outdoor-device">
                 <div class="ap-u7-outdoor-logo">U</div>
-                <div class="ap-u7-outdoor-led ${ledEnabled ? "" : "off"}"></div>
+                <div class="ap-u7-outdoor-led ${ledEnabled2 ? "" : "off"}"></div>
               </div>` : shapedApStyles.has(apFrontStyle) ? `
-              <div class="ap-device ap-shaped-device ${apFrontStyle}-device${usesApEdgeGlow ? " edge-glow" : ""}${ledEnabled ? "" : " off"}">
+              <div class="ap-device ap-shaped-device ${apFrontStyle}-device${usesApEdgeGlow ? " edge-glow" : ""}${ledEnabled2 ? "" : " off"}">
                 <div class="ap-shaped-logo">U</div>
-                <div class="ap-shaped-led ${ledEnabled ? "" : "off"}"></div>
+                <div class="ap-shaped-led ${ledEnabled2 ? "" : "off"}"></div>
               </div>` : `
               <div class="ap-device">
-                <div class="ap-ring ${ledEnabled ? "online" : "off"}">
+                <div class="ap-ring ${ledEnabled2 ? "online" : "off"}">
                   <div class="ap-logo">u</div>
                 </div>
               </div>`}
@@ -11741,7 +12073,9 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       this._attachPortActionHandlers(this._ctx);
       this._attachDeviceLinkHandler();
       this._attachProductImageHandler();
-      this.shadowRoot.querySelector("[data-action='toggle-led']")?.addEventListener("click", () => this._toggleEntity(ledEntity));
+      this.shadowRoot.querySelector("[data-action='toggle-led']")?.addEventListener("click", () => {
+        if (ledAvailable2) this._setLedEntity(ledEntity2, ledEnabled2);
+      });
       return;
     }
     const ctx = this._ctx;
@@ -11811,10 +12145,12 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       const poePower = selected.poe_power_entity ? formatState(this._hass, selected.poe_power_entity) : "\u2014";
       const rxVal = selected.rx_entity ? formatState(this._hass, selected.rx_entity) : null;
       const txVal = selected.tx_entity ? formatState(this._hass, selected.tx_entity) : null;
+      const showVlanTile = !!vlan && !this._clientInfoHasVlan(clientInfo);
+      const hasActions = !!(selected.port_switch_entity || selected.poe_switch_entity || selected.power_cycle_entity);
       const portTitle = selected.port_label || (selected.kind === "special" ? selected.label : `${this._t("port_label")} ${selected.label}`);
       detail = `
         <div class="detail-title">${this._escapeHtml(portTitle)}</div>
-        <div class="detail-grid">
+        <div class="detail-grid${hasActions ? "" : " no-actions"}">
           <div class="detail-item">
             <div class="detail-label">${this._escapeHtml(this._t("link_status"))}</div>
             <div class="detail-value ${linkUp ? "online" : linkKnown ? "offline" : "unknown"}">
@@ -11825,7 +12161,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
             <div class="detail-label">${this._escapeHtml(this._t("speed"))}</div>
             <div class="detail-value">${this._escapeHtml(speedText || "\u2014")}</div>
           </div>
-          ${vlan ? `
+          ${showVlanTile ? `
           <div class="detail-item">
             <div class="detail-label">${this._escapeHtml(this._t(vlan.source === "client" ? "client_vlan" : "vlan"))}</div>
             <div class="detail-value">${this._escapeHtml(vlan.value)}</div>
@@ -11857,7 +12193,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
             <div class="detail-value">${this._escapeHtml(txVal)}</div>
           </div>` : ""}
         </div>
-        <div class="actions">
+        ${hasActions ? `<div class="actions">
           ${selected.port_switch_entity ? (() => {
         const enabled = isOn(this._hass, selected.port_switch_entity);
         const confirmDisableAttr = enabled ? ` data-confirm-disable="true" data-port-name="${this._escapeAttr(portTitle)}"` : "";
@@ -11871,7 +12207,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           ${selected.power_cycle_entity ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(selected.power_cycle_entity)}">
             \u21BA ${this._escapeHtml(this._t("power_cycle"))}
           </button>` : ""}
-        </div>`;
+        </div>` : ""}`;
     }
     const integratedWirelessClients = ctx?.layout?.supportsIntegratedWifi ? this._buildWirelessClientData() : null;
     const wirelessClientSection = integratedWirelessClients?.hasTotal ? `
@@ -11881,6 +12217,8 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     const headerTitle = this._title();
     const headerMetrics = this._headerMetrics();
     const productImageHtml = this._renderProductImage("network");
+    const ledState = this._apLedState();
+    const { ledEntity, ledEnabled, ledAvailable } = ledState;
     const portStatusPartial = !portStatus.complete && portStatus.known > 0;
     const portStatusNoticeTitle = portStatusPartial ? this._t("port_status_partial") : this._t("port_status_unknown");
     const portStatusNoticeBody = portStatusPartial ? this._t("port_status_partial_detail").replace("{unknown}", String(portStatus.unknown)).replace("{total}", String(portStatus.total)) : this._t("speed_disabled");
@@ -11909,6 +12247,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           </div>
           <div class="header-actions">
             ${ctx?.reboot_entity ? `<button class="chip compact" data-action="reboot-device">\u21BB ${this._escapeHtml(this._t("reboot"))}</button>` : ""}
+            ${this._renderLedControl(ledState)}
             <div class="chip connection-chip ${portStatus.complete ? portStatus.connected > 0 ? "active" : "idle" : portStatusPartial ? "partial" : "unknown"}" role="status" title="${this._escapeAttr(portStatusTooltip)}"><div class="dot"></div>${this._escapeHtml(portStatus.label)}</div>
           </div>
         </div>
@@ -11922,12 +12261,17 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           </div>
         </div>
 
+        ${this._renderEtherlightingControls()}
         ${selected || this._config?.dynamic_port_details !== true ? `<div class="section">${detail}</div>` : ""}
         ${wirelessClientSection}
       </ha-card>`;
     this.shadowRoot.querySelectorAll(".port").forEach((btn) => btn.addEventListener("click", () => this._selectKey(btn.dataset.key)));
     this._attachDeviceLinkHandler();
     this._attachProductImageHandler();
+    this._attachEtherlightingHandlers();
+    this.shadowRoot.querySelector("[data-action='toggle-led']")?.addEventListener("click", () => {
+      if (ledAvailable) this._setLedEntity(ledEntity, ledEnabled);
+    });
     this.shadowRoot.querySelector("[data-action='toggle-port']")?.addEventListener("click", (e) => {
       const target = e.currentTarget;
       if (target.dataset.confirmDisable === "true") {

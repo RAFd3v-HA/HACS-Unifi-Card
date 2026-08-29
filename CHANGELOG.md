@@ -3,6 +3,8 @@
 ## [v0.8.4]
 
 ### 🐛 Bug Fixes
+- Register the asynchronous Etherlighting WebSocket command with Home Assistant's async response wrapper, require both a Home Assistant administrator and a confirmed UniFi administrator, serialize writes per device, and verify changed settings with a controller read-back before reporting success.
+- Make device LED controls resilient to unavailable entities, rejected service calls, rapid double clicks, and device changes by using explicit on/off commands, a disabled busy state, and visible error feedback.
 - Fix the optional companion backend failing to load because its local `websocket_api.py` shadowed Home Assistant's WebSocket API module; suppress the partial-port notice while an online switch is still reporting usable ports.
 - Declare the dashboard bundle filename explicitly in `hacs.json`, so forks whose repository name differs from `unifi-device-card` still install the correct frontend resource through HACS.
 - Show a precise partial-status notice when only some ports have usable link telemetry, keep the header counter in the familiar `connected/total` format without a `≥` prefix, and explain the remaining uncertainty in its tooltip.
@@ -13,6 +15,9 @@
 - Keep the USW Ultra, Ultra 60W, and Ultra 210W front panels identical by placing their shared RJ45 uplink beside ports 1–7; the variants differ by power adapter/PoE budget, not port arrangement.
 
 ### ✨ Improvements
+- Add native LED toggles for switches and access points and guarded Etherlighting controls for compatible switches through the optional backend; unsupported devices keep the entity-only fallback.
+- Reduce the height of landscape product-image frames, remove the external Ubiquiti link from the image stage, and keep the lower detail spacing aligned with the card's side padding.
+- Avoid repeating the client VLAN in a separate port-detail tile when the connected-client line already includes it.
 - Add optional companion-backend support that reuses Home Assistant's existing UniFi runtime to map wired clients to switch ports, expose client VLAN/IP/rate and authoritative port link/speed data, enrich WLAN band assignments, and supply mesh RSSI without storing another set of controller credentials; the previous entity-only behavior remains the automatic fallback.
 - Join the official product image and live front-panel ports into one inset hardware stage with shared borders, radii, lighting, and a softer visual transition.
 - Add an explicit editor action to enable disabled UniFi link-speed sensors in bounded batches and reload the affected UniFi config entry, so active ports can be detected without storing UniFi credentials in the Lovelace card.
