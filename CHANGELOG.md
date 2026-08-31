@@ -3,6 +3,7 @@
 ## [v0.8.4]
 
 ### 🐛 Bug Fixes
+- Restore Port 16 client/link evidence on managed UniFi uplinks, recognize model- and controller-confirmed PoE capability independently of link state, hide stale negotiated speed while a port is down, and fall back to the guarded backend power-cycle action when the Home Assistant button entity is missing or unavailable.
 - Register the asynchronous Etherlighting WebSocket command with Home Assistant's async response wrapper, require both a Home Assistant administrator and a confirmed UniFi administrator, serialize writes per device, and verify changed settings with a controller read-back before reporting success.
 - Make device LED controls resilient to unavailable entities, rejected service calls, rapid double clicks, and device changes by using explicit on/off commands, a disabled busy state, and visible error feedback.
 - Fix the optional companion backend failing to load because its local `websocket_api.py` shadowed Home Assistant's WebSocket API module; suppress the partial-port notice while an online switch is still reporting usable ports.
@@ -15,6 +16,10 @@
 - Keep the USW Ultra, Ultra 60W, and Ultra 210W front panels identical by placing their shared RJ45 uplink beside ports 1–7; the variants differ by power adapter/PoE budget, not port arrangement.
 
 ### ✨ Improvements
+- Replace the inherited README with a self-contained German feature, installation, configuration, security, and troubleshooting guide without external repository references or embedded third-party screenshots.
+- Add a Home Assistant setup/reconfigure UI for the companion backend with the existing official UniFi runtime as the recommended source, an explicit backend-only direct-login fallback, site validation, source status, privacy-safe diagnostics, and strict source isolation without silent fallback.
+- Show companion-backend and configured-source health in the visual card editor and link directly to the backend setup without creating or changing Lovelace cards.
+- Include managed UniFi child devices and conservative single-MAC edge-port observations in live client mapping, allowing clients without their own Home Assistant entity to appear when UniFi provides unambiguous topology evidence.
 - Add native LED toggles for switches and access points and guarded Etherlighting controls for compatible switches through the optional backend; unsupported devices keep the entity-only fallback.
 - Reduce the height of landscape product-image frames, remove the external Ubiquiti link from the image stage, and keep the lower detail spacing aligned with the card's side padding.
 - Avoid repeating the client VLAN in a separate port-detail tile when the connected-client line already includes it.

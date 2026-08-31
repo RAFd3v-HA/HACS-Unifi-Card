@@ -1887,8 +1887,8 @@ function inferCapability(entity, identity) {
   if (objectInfo?.feature === "firewall_policy" || tk === "firewall_policy_control") {
     return "firewall_policy";
   }
-  if (domain === "button" && (tk === "restart" || tk === "reboot" || tk === "power_cycle")) {
-    return tk === "power_cycle" ? "power_cycle" : "restart";
+  if (domain === "button" && (tk === "restart" || tk === "reboot" || tk === "power_cycle" || tk === "port_power_cycle")) {
+    return tk === "power_cycle" || tk === "port_power_cycle" ? "power_cycle" : "restart";
   }
   if (domain === "sensor" && tk === "port_bandwidth_rx") return "port_rx";
   if (domain === "sensor" && tk === "port_bandwidth_tx") return "port_tx";
@@ -2807,7 +2807,7 @@ function classifyRelevantEntityType(entity) {
   const tk = lower(entity.translation_key || "");
   const dc = lower(entity.device_class || "");
   const odc = lower(entity.original_device_class || "");
-  if (eid.startsWith("button.") && (id.includes("power_cycle") || tk === "power_cycle")) {
+  if (eid.startsWith("button.") && (id.includes("power_cycle") || tk === "power_cycle" || tk === "port_power_cycle")) {
     return "power_cycle";
   }
   if (eid.startsWith("switch.") && hasIndexedPortId(id) && id.endsWith("_poe")) {
@@ -2916,7 +2916,7 @@ function classifyPortEntity(entity, isSpecial = false) {
   if (eid.startsWith("sensor.") && portInfo?.feature === "port_tx") return "tx_entity";
   if (eid.startsWith("sensor.") && portInfo?.feature === "link_speed") return "speed_entity";
   if (eid.startsWith("sensor.") && portInfo?.feature === "poe_power") return "poe_power_entity";
-  if (eid.startsWith("button.") && (id.includes("power_cycle") || tk === "power_cycle" || id.includes("_restart") || id.includes("_reboot"))) {
+  if (eid.startsWith("button.") && (id.includes("power_cycle") || tk === "power_cycle" || tk === "port_power_cycle" || id.includes("_restart") || id.includes("_reboot"))) {
     return "power_cycle_entity";
   }
   if (eid.startsWith("sensor.")) {
@@ -3039,7 +3039,8 @@ function ensureSpecialPort(map, key, label) {
   return map.get(key);
 }
 function extractPortLabel(entity) {
-  const isLabelSource = entity.entity_id?.startsWith("button.") && lower(entity.entity_id).includes("power_cycle") || entity.entity_id?.startsWith("sensor.") && lower(entity.entity_id).includes("_link_speed") || entity.entity_id?.startsWith("sensor.") && lower(entity.entity_id).includes("_poe_power");
+  const translationKey = lower(entity.translation_key || "");
+  const isLabelSource = entity.entity_id?.startsWith("button.") && (lower(entity.entity_id).includes("power_cycle") || translationKey === "power_cycle" || translationKey === "port_power_cycle") || entity.entity_id?.startsWith("sensor.") && lower(entity.entity_id).includes("_link_speed") || entity.entity_id?.startsWith("sensor.") && lower(entity.entity_id).includes("_poe_power");
   if (!isLabelSource) return null;
   const translatedPortName = normalize(entity.translation_placeholders?.port_name || "");
   if (translatedPortName) return translatedPortName;
@@ -3168,7 +3169,13 @@ function mergePortsWithLayout(layout, discoveredPorts) {
       raw_entities: [],
       port_label: null
     };
-    merged.push(hasKnownPoeRange && !hasPoe ? stripPoeEntities(port) : port);
+    const portWithCapabilities = {
+      ...port,
+      poe_capable: hasKnownPoeRange ? hasPoe : port.poe_capable ?? null
+    };
+    merged.push(
+      hasKnownPoeRange && !hasPoe ? stripPoeEntities(portWithCapabilities) : portWithCapabilities
+    );
   }
   for (const port of discoveredPorts) {
     if (!layout?.preserveDeclaredRows && !layoutPorts.includes(port.port) && !specialPortNumbers.has(port.port)) {
@@ -3440,8 +3447,10 @@ var PORT_TRANSLATION_KEYS = /* @__PURE__ */ new Set([
   "port_bandwidth_rx",
   "port_bandwidth_tx",
   "port_link_speed",
+  "port_power_cycle",
   "poe",
   "poe_power",
+  "port_poe_power",
   "poe_port_control"
 ]);
 function filterPortsByLayout(discoveredPorts, layout) {
@@ -4013,7 +4022,12 @@ var TRANSLATIONS = {
     confirm_no: "No",
     poe_off: "PoE off",
     poe_on: "PoE on",
+    poe_capable: "PoE capable",
     power_cycle: "Power Cycle",
+    power_cycle_in_progress: "Power cycle running\u2026",
+    power_cycle_error: "The PoE power cycle failed.",
+    confirm_power_cycle_title: "Restart PoE device?",
+    confirm_power_cycle_message: "Power on {port} will be interrupted briefly. Continue?",
     reboot: "Reboot",
     led_on: "LED On",
     led_off: "LED Off",
@@ -4110,6 +4124,24 @@ var TRANSLATIONS = {
     editor_no_devices: "No UniFi switches, gateways, or access points found in Home Assistant.",
     editor_hint: "Only devices from the UniFi Network Integration are shown.",
     editor_error: "Failed to load UniFi devices.",
+    editor_backend_title: "UniFi data source",
+    editor_backend_hint: "The card stores no credentials. The companion backend can reuse Home Assistant's official UniFi integration or use an explicitly configured direct login kept in Home Assistant.",
+    editor_backend_companion_label: "Companion backend",
+    editor_backend_source_label: "Configured UniFi source",
+    editor_backend_status_checking: "Checking\u2026",
+    editor_backend_status_reachable: "Reachable",
+    editor_backend_status_unavailable: "Not reachable",
+    editor_backend_source_found: "Found",
+    editor_backend_source_official: "Official integration",
+    editor_backend_source_direct: "Direct login",
+    editor_backend_source_connected: "Connected",
+    editor_backend_source_unavailable: "Not connected",
+    editor_backend_source_missing: "Not found",
+    editor_backend_unavailable_hint: "Install or reload the UniFi Device Card Backend integration to enable live topology and direct controls. The card continues to use entity data without it.",
+    editor_backend_source_unavailable_hint: "The selected UniFi source is configured but currently unavailable. Reload or reconfigure the companion backend.",
+    editor_backend_source_missing_hint: "Open the companion backend setup and choose the official UniFi integration or the optional direct-login fallback.",
+    editor_backend_refresh: "Check again",
+    editor_backend_open_integrations: "Open backend setup",
     // WAN / WAN2 selector (editor — gateway only)
     editor_wan_port_label: "WAN Port",
     editor_wan_port_auto: "Default (automatic)",
@@ -4266,7 +4298,12 @@ var TRANSLATIONS = {
     confirm_no: "Nein",
     poe_off: "PoE Aus",
     poe_on: "PoE Ein",
+    poe_capable: "PoE-f\xE4hig",
     power_cycle: "Power Cycle",
+    power_cycle_in_progress: "Power Cycle l\xE4uft\u2026",
+    power_cycle_error: "Der PoE Power Cycle ist fehlgeschlagen.",
+    confirm_power_cycle_title: "PoE-Ger\xE4t neu starten?",
+    confirm_power_cycle_message: "Die Stromversorgung an {port} wird kurz unterbrochen. Fortfahren?",
     reboot: "Neustart",
     led_on: "LED Ein",
     led_off: "LED Aus",
@@ -4363,6 +4400,24 @@ var TRANSLATIONS = {
     editor_no_devices: "Keine UniFi Switches, Gateways oder Access Points in Home Assistant gefunden.",
     editor_hint: "Nur Ger\xE4te aus der UniFi Network Integration werden angezeigt.",
     editor_error: "UniFi-Ger\xE4te konnten nicht geladen werden.",
+    editor_backend_title: "UniFi-Datenquelle",
+    editor_backend_hint: "Die Karte speichert keine Zugangsdaten. Das Companion-Backend kann die offizielle UniFi-Integration von Home Assistant verwenden oder einen ausdr\xFCcklich eingerichteten direkten Login, der in Home Assistant verbleibt.",
+    editor_backend_companion_label: "Companion-Backend",
+    editor_backend_source_label: "Konfigurierte UniFi-Quelle",
+    editor_backend_status_checking: "Wird gepr\xFCft\u2026",
+    editor_backend_status_reachable: "Erreichbar",
+    editor_backend_status_unavailable: "Nicht erreichbar",
+    editor_backend_source_found: "Gefunden",
+    editor_backend_source_official: "Offizielle Integration",
+    editor_backend_source_direct: "Direkter Login",
+    editor_backend_source_connected: "Verbunden",
+    editor_backend_source_unavailable: "Nicht verbunden",
+    editor_backend_source_missing: "Nicht gefunden",
+    editor_backend_unavailable_hint: "Installiere oder lade die Integration UniFi Device Card Backend neu, um Live-Topologie und direkte Steuerungen zu aktivieren. Ohne Backend nutzt die Karte weiterhin Entity-Daten.",
+    editor_backend_source_unavailable_hint: "Die gew\xE4hlte UniFi-Quelle ist eingerichtet, aber derzeit nicht verf\xFCgbar. Lade das Companion-Backend neu oder konfiguriere es erneut.",
+    editor_backend_source_missing_hint: "\xD6ffne die Einrichtung des Companion-Backends und w\xE4hle die offizielle UniFi-Integration oder den optionalen direkten Login.",
+    editor_backend_refresh: "Erneut pr\xFCfen",
+    editor_backend_open_integrations: "Backend-Einrichtung \xF6ffnen",
     // WAN / WAN2 selector
     editor_wan_port_label: "WAN-Port",
     editor_wan_port_auto: "Standard (automatisch)",
@@ -5509,6 +5564,9 @@ function t(hass, key) {
 }
 
 // src/unifi-device-card-editor.js
+var BACKEND_STATUS_WS_TYPE = "unifi_device_card/port_clients";
+var BACKEND_STATUS_PROBE_MAC = "00:00:00:00:00:00";
+var BACKEND_STATUS_REFRESH_INTERVAL = 3e4;
 function slotPortType(slot) {
   const key = String(slot.key || "").toLowerCase();
   if (key === "wan" || key === "wan2") return "wan";
@@ -5734,6 +5792,10 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     this._portLedBlinkExpanded = false;
     this._portSensorActionState = "";
     this._portSensorActionError = "";
+    this._backendStatus = null;
+    this._backendStatusLoading = false;
+    this._backendStatusCheckedAt = 0;
+    this._backendStatusToken = 0;
   }
   setConfig(config) {
     const prevDeviceId = this._config?.device_id || "";
@@ -5793,6 +5855,7 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     if (!this._loaded && !this._loading) {
       this._loadDevices();
     }
+    this._loadBackendStatus();
     const deviceId = this._config?.device_id || "";
     if (deviceId) {
       if (this._config?.fake_device !== true && deviceId !== this._lastHintDeviceId) {
@@ -5865,6 +5928,36 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
     }
     this._loading = false;
     this._render();
+  }
+  async _loadBackendStatus(force = false) {
+    if (!this._hass || this._backendStatusLoading) return;
+    const now = Date.now();
+    if (!force && this._backendStatus && now - this._backendStatusCheckedAt < BACKEND_STATUS_REFRESH_INTERVAL) return;
+    const token = ++this._backendStatusToken;
+    this._backendStatusLoading = true;
+    this._patchBackendStatus();
+    try {
+      const result = await this._hass.callWS({
+        type: BACKEND_STATUS_WS_TYPE,
+        // The existing read-only endpoint needs a syntactically valid MAC.
+        // A neutral probe keeps this status check independent of card selection.
+        device_mac: BACKEND_STATUS_PROBE_MAC
+      });
+      if (token !== this._backendStatusToken) return;
+      this._backendStatus = {
+        reachable: true,
+        sources: Array.isArray(result?.sources) ? result.sources : []
+      };
+    } catch (_err) {
+      if (token !== this._backendStatusToken) return;
+      this._backendStatus = { reachable: false, sources: [] };
+    } finally {
+      if (token === this._backendStatusToken) {
+        this._backendStatusLoading = false;
+        this._backendStatusCheckedAt = Date.now();
+        this._patchBackendStatus();
+      }
+    }
   }
   async _loadEntityHint(deviceId) {
     if (!this._hass || !deviceId) return;
@@ -6342,6 +6435,67 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
       </div>
     `;
   }
+  _backendStatusHTML() {
+    const sources = Array.isArray(this._backendStatus?.sources) ? this._backendStatus.sources : [];
+    const configuredSource = sources[0] || null;
+    const frontendSourceFound = this._config?.fake_device !== true && ((this._deviceCtx?.unifi_config_entry_ids?.length || 0) > 0 || this._devices.length > 0);
+    const sourceConfigured = !!configuredSource || frontendSourceFound;
+    const sourceAvailable = configuredSource ? configuredSource.available === true : frontendSourceFound;
+    const sourceType = configuredSource?.source_type === "direct" ? "direct" : "official";
+    const backendChecking = this._backendStatusLoading || !this._backendStatus;
+    const sourceChecking = !sourceConfigured && (backendChecking || this._loading || !this._loaded);
+    const backendState = backendChecking ? "checking" : this._backendStatus?.reachable ? "ok" : "missing";
+    const sourceState = sourceChecking ? "checking" : sourceAvailable ? "ok" : sourceConfigured ? "warning" : "missing";
+    const backendValue = backendChecking ? this._t("editor_backend_status_checking") : this._t(this._backendStatus?.reachable ? "editor_backend_status_reachable" : "editor_backend_status_unavailable");
+    let sourceValue = this._t("editor_backend_source_missing");
+    if (sourceChecking) {
+      sourceValue = this._t("editor_backend_status_checking");
+    } else if (sourceConfigured) {
+      const sourceName = this._t(sourceType === "direct" ? "editor_backend_source_direct" : "editor_backend_source_official");
+      const sourceStatus = this._t(configuredSource ? sourceAvailable ? "editor_backend_source_connected" : "editor_backend_source_unavailable" : "editor_backend_source_found");
+      sourceValue = `${sourceName} \xB7 ${sourceStatus}`;
+    }
+    let guidance = "";
+    if (!backendChecking && !this._backendStatus?.reachable) {
+      guidance = this._t("editor_backend_unavailable_hint");
+    } else if (!sourceChecking && sourceConfigured && !sourceAvailable) {
+      guidance = this._t("editor_backend_source_unavailable_hint");
+    } else if (!sourceChecking && !sourceConfigured) {
+      guidance = this._t("editor_backend_source_missing_hint");
+    }
+    return `
+      <section class="backend-setup" aria-label="${escapeAttr(this._t("editor_backend_title"))}" aria-live="polite">
+        <div class="section-title">${escapeHtml(this._t("editor_backend_title"))}</div>
+        <div class="hint">${escapeHtml(this._t("editor_backend_hint"))}</div>
+        <div class="backend-status-list">
+          <div class="backend-status-row">
+            <span class="status-dot ${backendState}" aria-hidden="true"></span>
+            <span>${escapeHtml(this._t("editor_backend_companion_label"))}</span>
+            <strong>${escapeHtml(backendValue)}</strong>
+          </div>
+          <div class="backend-status-row">
+            <span class="status-dot ${sourceState}" aria-hidden="true"></span>
+            <span>${escapeHtml(this._t("editor_backend_source_label"))}</span>
+            <strong>${escapeHtml(sourceValue)}</strong>
+          </div>
+        </div>
+        ${guidance ? `<div class="hint backend-guidance">${escapeHtml(guidance)}</div>` : ""}
+        <div class="backend-actions">
+          <button type="button" class="nav-btn secondary" id="refresh_backend_status" ${backendChecking ? "disabled" : ""}>
+            ${escapeHtml(this._t("editor_backend_refresh"))}
+          </button>
+          <button type="button" class="nav-btn" id="open_backend_integrations">
+            ${escapeHtml(this._t("editor_backend_open_integrations"))}
+          </button>
+        </div>
+      </section>
+    `;
+  }
+  _openBackendIntegrations() {
+    const path = "/config/integrations/integration/unifi_device_card";
+    window.history.pushState(null, "", path);
+    window.dispatchEvent(new Event("location-changed"));
+  }
   _warningHTML() {
     if (!this._entityHint && this._portSensorActionState === "success") {
       return `<div class="warn success"><div class="warn-title">${escapeHtml(this._t("warning_enable_link_speed_success"))}</div></div>`;
@@ -6545,6 +6699,71 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
 
       .nav-btn.danger {
         background: var(--error-color);
+      }
+
+      .nav-btn:disabled {
+        opacity: .6;
+        cursor: progress;
+      }
+
+      .backend-setup {
+        display: grid;
+        gap: 10px;
+        padding: 12px 14px;
+        border: 1px solid var(--divider-color);
+        border-radius: 12px;
+        background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color));
+      }
+
+      .backend-status-list {
+        display: grid;
+        gap: 7px;
+      }
+
+      .backend-status-row {
+        display: grid;
+        grid-template-columns: 10px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        font-size: .88rem;
+      }
+
+      .backend-status-row strong {
+        text-align: right;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--disabled-text-color, #9ca3af);
+      }
+
+      .status-dot.ok {
+        background: var(--success-color, #22a447);
+      }
+
+      .status-dot.missing {
+        background: var(--warning-color, #f59e0b);
+      }
+
+      .status-dot.warning {
+        background: var(--warning-color, #f59e0b);
+      }
+
+      .status-dot.checking {
+        background: var(--primary-color);
+      }
+
+      .backend-guidance {
+        line-height: 1.4;
+      }
+
+      .backend-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
       }
 
       .color-grid {
@@ -6824,6 +7043,8 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
           <div class="hint">${this._loading ? escapeHtml(this._t("editor_device_loading")) : this._devices.length ? escapeHtml(this._t("editor_hint")) : escapeHtml(this._error || this._t("editor_no_devices"))}</div>
         </div>
 
+        <div id="backend_status_slot">${this._backendStatusHTML()}</div>
+
         <div class="field">
           <label>${escapeHtml(this._t("editor_name_toggle_label"))}</label>
           <label class="checkbox-row">
@@ -7099,6 +7320,7 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
       </div>
     `;
     this.shadowRoot.getElementById("device_id")?.addEventListener("change", (ev) => this._onDeviceChange(ev));
+    this._attachBackendStatusHandlers();
     this.shadowRoot.getElementById("show_name")?.addEventListener("change", (ev) => this._onShowNameChange(ev));
     this.shadowRoot.getElementById("show_telemetry")?.addEventListener("change", (ev) => this._onShowTelemetryChange(ev));
     this.shadowRoot.getElementById("appearance_mode")?.addEventListener("change", (ev) => this._emitConfig({
@@ -7162,6 +7384,17 @@ var UnifiDeviceCardEditor = class extends HTMLElement {
   _attachWarningHandlers() {
     this.shadowRoot?.getElementById("enable_link_speed_entities")?.addEventListener("click", () => this._enablePortLinkSpeedEntities());
   }
+  _attachBackendStatusHandlers() {
+    this.shadowRoot?.getElementById("refresh_backend_status")?.addEventListener("click", () => this._loadBackendStatus(true));
+    this.shadowRoot?.getElementById("open_backend_integrations")?.addEventListener("click", () => this._openBackendIntegrations());
+  }
+  _patchBackendStatus() {
+    if (!this._rendered || !this.shadowRoot) return;
+    const slot = this.shadowRoot.getElementById("backend_status_slot");
+    if (!slot) return;
+    slot.innerHTML = this._backendStatusHTML();
+    this._attachBackendStatusHandlers();
+  }
   _patchWarning() {
     if (!this._rendered || !this.shadowRoot) return;
     const slot = this.shadowRoot.getElementById("warning_slot");
@@ -7187,6 +7420,7 @@ var BACKEND_REFRESH_INTERVAL = 15e3;
 var BACKEND_RETRY_INTERVAL = 6e4;
 var BACKEND_WS_TYPE = "unifi_device_card/port_clients";
 var BACKEND_ETHERLIGHTING_WS_TYPE = "unifi_device_card/set_etherlighting";
+var BACKEND_POWER_CYCLE_WS_TYPE = "unifi_device_card/power_cycle_poe";
 var LOG_STYLES = {
   badge: "background:#00AEEF;color:#fff;padding:2px 6px;border-radius:2px;font-weight:700;",
   version: "background:#2a2a2a;color:#fff;padding:2px 6px;border-radius:2px;font-weight:700;",
@@ -7235,6 +7469,9 @@ var UnifiDeviceCard = class extends HTMLElement {
     this._ledUpdating = false;
     this._ledError = "";
     this._ledRequestToken = 0;
+    this._poeCycleUpdatingKey = "";
+    this._poeCycleError = "";
+    this._poeCycleRequestToken = 0;
     this._sfpConnectedSeen = /* @__PURE__ */ new Set();
     this._handleEntityRegistryChanged = (event) => {
       if (event?.detail?.deviceId !== this._config?.device_id) return;
@@ -7424,6 +7661,7 @@ var UnifiDeviceCard = class extends HTMLElement {
     this._backendLoadingToken = 0;
     this._etherlightingRequestToken += 1;
     this._ledRequestToken += 1;
+    this._poeCycleRequestToken += 1;
     this._backendData = null;
     this._backendDeviceMac = "";
     this._backendLoadedAt = 0;
@@ -7434,6 +7672,8 @@ var UnifiDeviceCard = class extends HTMLElement {
     this._etherlightingError = "";
     this._ledUpdating = false;
     this._ledError = "";
+    this._poeCycleUpdatingKey = "";
+    this._poeCycleError = "";
   }
   async _ensureBackendData(force = false, render = true) {
     if (!this._hass || !this._ctx || this._ctx?.fake_device === true) return;
@@ -7647,7 +7887,7 @@ var UnifiDeviceCard = class extends HTMLElement {
     const visibleNumbered = numbered.filter((slot) => !specialPortsInUse.has(slot.port));
     const panelRows = this._buildEffectiveRows(this._ctx, visibleNumbered).length + (specials.length ? 1 : 0);
     const selected = [...specials, ...visibleNumbered].find((slot) => slot.key === this._selectedKey) || (this._config?.dynamic_port_details === true ? null : specials[0] || visibleNumbered[0]) || null;
-    const hasPoe = !!(selected?.poe_switch_entity || selected?.poe_power_entity || selected?.power_cycle_entity);
+    const hasPoe = selected?.poe_capable === true || !!(selected?.poe_switch_entity || selected?.poe_power_entity || selected?.power_cycle_entity);
     const hasTraffic2 = !!(selected?.rx_entity || selected?.tx_entity);
     const productRows = this._productImageData() ? 4 : 0;
     return Math.max(6, Math.min(20, 5 + productRows + panelRows + (hasPoe ? 1 : 0) + (hasTraffic2 ? 1 : 0)));
@@ -8188,6 +8428,38 @@ var UnifiDeviceCard = class extends HTMLElement {
     if (!Number.isInteger(slot?.port)) return null;
     return portClientIndex?.get(slot.port)?.port || null;
   }
+  _portPoeInfo(slot, portClientIndex = null) {
+    const backend = this._backendPortInfo(slot, portClientIndex);
+    const entityStatus = getPoeStatus(this._hass, slot);
+    const backendCapable = typeof backend?.poe_capable === "boolean" ? backend.poe_capable : null;
+    const declaredCapable = slot?.poe_capable === true;
+    const entityCapable = !!(slot?.poe_switch_entity || slot?.poe_power_entity || slot?.power_cycle_entity);
+    const capable = backendCapable === true || declaredCapable || entityCapable ? true : backendCapable === false || slot?.poe_capable === false ? false : null;
+    const enabled = typeof backend?.poe_enabled === "boolean" ? backend.poe_enabled : this._isActionEntityAvailable(slot?.poe_switch_entity) ? entityStatus.active : entityStatus.active ? true : null;
+    let power = slot?.poe_power_entity ? formatState(this._hass, slot.poe_power_entity) : null;
+    if (!power || power === "\u2014") {
+      const watts = Number(backend?.poe_power_w);
+      power = Number.isFinite(watts) && watts >= 0 ? `${Number(watts.toFixed(watts >= 10 ? 1 : 2))} W` : null;
+    }
+    return {
+      capable,
+      enabled,
+      power,
+      backendCycleAvailable: backend?.power_cycle_available === true
+    };
+  }
+  _poeCycleKey(slot) {
+    const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
+    return deviceMac && Number.isInteger(slot?.port) ? `${deviceMac}:${slot.port}` : "";
+  }
+  _isPoeCycleBusy(slot) {
+    return !!this._poeCycleUpdatingKey;
+  }
+  _isActionEntityAvailable(entityId) {
+    const obj = stateObj(this._hass, entityId);
+    if (!obj) return false;
+    return String(obj.state ?? "").trim().toLowerCase() !== "unavailable";
+  }
   _formatBackendPortSpeed(speedMbit) {
     const speed = Number(speedMbit);
     if (!Number.isFinite(speed) || speed <= 0) return null;
@@ -8573,14 +8845,15 @@ var UnifiDeviceCard = class extends HTMLElement {
       }
       return byPort.get(port);
     };
-    if (normalizeMac(this._backendData?.device_mac) === deviceMac && this._backendData?.available === true) {
+    if (normalizeMac(this._backendData?.device_mac) === deviceMac) {
       for (const backendPort of this._backendData?.ports || []) {
         const port = Number.parseInt(backendPort?.port, 10);
         if (!Number.isInteger(port) || port < 1) continue;
         ensurePort2(port).port = backendPort;
       }
       for (const client of this._backendData?.clients || []) {
-        if (client?.is_wired !== true) continue;
+        const directWired = client?.direct === true ? client?.is_wired !== false : client?.is_wired === true;
+        if (!directWired) continue;
         if (normalizeMac(client?.switch_mac) !== deviceMac) continue;
         const port = Number.parseInt(client?.switch_port, 10);
         if (!Number.isInteger(port) || port < 1) continue;
@@ -8928,7 +9201,9 @@ var UnifiDeviceCard = class extends HTMLElement {
   }
   _selectKey(key) {
     const restoreFocus = this.shadowRoot?.activeElement?.matches?.(".port") === true;
+    const previousKey = this._selectedKey;
     this._selectedKey = this._config?.dynamic_port_details === true && this._selectedKey === key ? null : key;
+    if (this._selectedKey !== previousKey) this._poeCycleError = "";
     this._render();
     if (restoreFocus) {
       requestAnimationFrame(() => {
@@ -8984,6 +9259,48 @@ var UnifiDeviceCard = class extends HTMLElement {
     if (!entityId || !this._hass) return;
     this._log("debug", "press button", entityId);
     await this._hass.callService("button", "press", { entity_id: entityId });
+  }
+  async _powerCyclePort({ entityId = "", port = null, portName = "", key = "" } = {}) {
+    if (!this._hass || this._poeCycleUpdatingKey) return;
+    const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
+    const portNumber = Number.parseInt(port, 10);
+    const actionKey = key || (deviceMac && Number.isInteger(portNumber) ? `${deviceMac}:${portNumber}` : entityId);
+    if (!actionKey || !entityId && (!deviceMac || !Number.isInteger(portNumber))) return;
+    const label = portName || `${this._t("port_label")} ${portNumber}`;
+    const message = `${this._t("confirm_power_cycle_title")}
+
+${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
+    if (!window.confirm(message)) return;
+    const requestToken = ++this._poeCycleRequestToken;
+    const deviceId = this._config?.device_id || "";
+    this._poeCycleUpdatingKey = actionKey;
+    this._poeCycleError = "";
+    this._render();
+    const usableEntityId = this._isActionEntityAvailable(entityId) ? entityId : "";
+    try {
+      if (usableEntityId) {
+        await this._pressButton(usableEntityId);
+      } else {
+        const response = await this._hass.callWS({
+          type: BACKEND_POWER_CYCLE_WS_TYPE,
+          device_mac: deviceMac,
+          port: portNumber
+        });
+        if (response?.accepted !== true) throw new Error("Invalid PoE power-cycle response");
+      }
+    } catch (err) {
+      if (requestToken !== this._poeCycleRequestToken) return;
+      this._poeCycleError = this._t("power_cycle_error");
+      this._log("warn", `Failed to power cycle ${label}`, err);
+    } finally {
+      if (requestToken === this._poeCycleRequestToken && deviceId === (this._config?.device_id || "")) {
+        this._poeCycleUpdatingKey = "";
+        this._render();
+        requestAnimationFrame(() => {
+          this.shadowRoot?.querySelector(`[data-action="power-cycle"][data-key="${CSS.escape(actionKey)}"]`)?.focus();
+        });
+      }
+    }
   }
   _title() {
     if (this._config?.show_name === false) return "";
@@ -9140,9 +9457,9 @@ var UnifiDeviceCard = class extends HTMLElement {
     return controlState === "off" || controlState === "false" || controlState === "0";
   }
   _isPortConnected(port, portClientIndex = null) {
+    if (this._hasObservedPortClients(port, portClientIndex)) return true;
     const backendUp = this._backendPortInfo(port, portClientIndex)?.up;
     if (typeof backendUp === "boolean") return backendUp;
-    if (this._hasObservedPortClients(port, portClientIndex)) return true;
     const trustLowSpeedLink = this._config?.trust_link_speed_ports?.includes(port?.port) === true;
     if (isSfpLikePort(port)) {
       const key = port?.key || port?.physical_key;
@@ -9202,9 +9519,9 @@ var UnifiDeviceCard = class extends HTMLElement {
     if (this._config?.port_led_blink !== true) return false;
     return mediaType === "sfp" ? this._config?.port_led_blink_sfp !== false : this._config?.port_led_blink_rj45 !== false;
   }
-  _poeLedClass(port) {
-    const poe = getPoeStatus(this._hass, port);
-    return poe.active ? "orange" : "off";
+  _poeLedClass(port, portClientIndex = null) {
+    const poe = this._portPoeInfo(port, portClientIndex);
+    return poe.enabled === true ? "orange" : "off";
   }
   _portMediaType(slot) {
     const explicitMedia = String(slot?.media || slot?.media_type || "").toLowerCase();
@@ -9251,8 +9568,8 @@ var UnifiDeviceCard = class extends HTMLElement {
     const speedText = linkUp ? this._getPortSpeedText(slot, portClientIndex) : null;
     const compactSpeed = linkUp ? this._compactPortSpeed(slot, portClientIndex) : "";
     const vlan = this._getPortVlan(slot, portClientIndex);
-    const poeStatus = getPoeStatus(this._hass, slot);
-    const poeOn = poeStatus.active;
+    const poeStatus = this._portPoeInfo(slot, portClientIndex);
+    const poeOn = poeStatus.enabled === true;
     const clientInfo = this._getMergedPortClientInfo(slot, portClientIndex);
     const mergedNames = clientInfo?.names || [];
     const mergedCount = clientInfo?.count || 0;
@@ -9278,7 +9595,7 @@ var UnifiDeviceCard = class extends HTMLElement {
       selectedKey === slot.key ? "selected" : "",
       this._portLedBlinkEnabled(isSfp ? "sfp" : "rj45") ? "blink-link-led" : ""
     ].filter(Boolean).join(" ");
-    const poeLed = this._poeLedClass(slot);
+    const poeLed = this._poeLedClass(slot, portClientIndex);
     const linkLed = this._linkLedClass(slot, portClientIndex);
     const housing = isSfp ? `
         <div class="port-sfp-wrap">
@@ -9552,7 +9869,8 @@ var UnifiDeviceCard = class extends HTMLElement {
           0 12px 30px rgba(3, 9, 20, .14);
       }
 
-      .hardware-stage.has-product-image:last-child {
+      .hardware-stage.has-product-image:last-child,
+      .hardware-stage.has-product-image.is-terminal {
         margin-bottom: 14px;
       }
 
@@ -11630,6 +11948,12 @@ var UnifiDeviceCard = class extends HTMLElement {
       .action-btn:hover { opacity: .85; }
       .action-btn:active { filter: brightness(.9); }
 
+      .action-btn:disabled {
+        cursor: wait;
+        opacity: .58;
+        filter: saturate(.65);
+      }
+
       button.chip:focus-visible,
       .action-btn:focus-visible {
         outline: 3px solid color-mix(in srgb, var(--udc-accent) 82%, white 18%);
@@ -11650,6 +11974,13 @@ var UnifiDeviceCard = class extends HTMLElement {
         background: var(--udc-button-secondary-bg, var(--udc-surf2));
         border: 1px solid var(--udc-button-border-color, var(--udc-border));
         color: var(--udc-button-secondary-text-color, var(--primary-text-color, var(--udc-text)));
+      }
+
+      .port-action-error {
+        margin-top: 9px;
+        color: var(--error-color, #d93025);
+        font-size: .76rem;
+        font-weight: 650;
       }
 
       .muted {
@@ -11740,7 +12071,8 @@ var UnifiDeviceCard = class extends HTMLElement {
           margin: 10px 11px 0;
         }
 
-        .hardware-stage.has-product-image:last-child {
+        .hardware-stage.has-product-image:last-child,
+        .hardware-stage.has-product-image.is-terminal {
           margin-bottom: 11px;
         }
 
@@ -11838,18 +12170,22 @@ var UnifiDeviceCard = class extends HTMLElement {
     const linkUp = this._isPortConnected(selected, portClientIndex);
     const linkKnown = this._isPortStatusKnown(selected, portClientIndex);
     const linkText = linkUp ? "connected" : linkKnown ? "no_link" : "port_status_unknown";
-    const speedText = this._getPortSpeedText(selected, portClientIndex);
+    const speedText = linkUp ? this._getPortSpeedText(selected, portClientIndex) : null;
     const vlan = this._getPortVlan(selected, portClientIndex);
-    const poeStatus = getPoeStatus(this._hass, selected);
-    const hasPoe = !!(selected.poe_switch_entity || selected.poe_power_entity || selected.power_cycle_entity);
-    const poeOn = poeStatus.active;
-    const poePower = selected.poe_power_entity ? formatState(this._hass, selected.poe_power_entity) : "\u2014";
+    const poeInfo = this._portPoeInfo(selected, portClientIndex);
+    const hasPoe = poeInfo.capable === true;
+    const poeOn = poeInfo.enabled === true;
+    const poeKnown = typeof poeInfo.enabled === "boolean";
+    const poePower = poeInfo.power || "\u2014";
     const rxVal = selected.rx_entity ? formatState(this._hass, selected.rx_entity) : null;
     const txVal = selected.tx_entity ? formatState(this._hass, selected.tx_entity) : null;
     const clientInfo = this._getMergedPortClientInfo(selected, portClientIndex);
     const clientValue = this._formatPortClientValue(clientInfo);
     const showVlanTile = !!vlan && !this._clientInfoHasVlan(clientInfo);
-    const hasActions = !!(selected.port_switch_entity || selected.poe_switch_entity || selected.power_cycle_entity);
+    const powerCycleEntity = this._isActionEntityAvailable(selected.power_cycle_entity) ? selected.power_cycle_entity : "";
+    const hasPowerCycle = !!powerCycleEntity || poeInfo.backendCycleAvailable;
+    const powerCycleBusy = this._isPoeCycleBusy(selected);
+    const hasActions = !!(selected.port_switch_entity || selected.poe_switch_entity || hasPowerCycle);
     const portTitle = selected.port_label || (selected.kind === "special" ? selected.label : `${this._t("port_label")} ${selected.label}`);
     return `
       <div class="detail-title">${this._escapeHtml(portTitle)}</div>
@@ -11877,8 +12213,8 @@ var UnifiDeviceCard = class extends HTMLElement {
         ${hasPoe ? `
         <div class="detail-item">
           <div class="detail-label">${this._escapeHtml(this._t("poe"))}</div>
-          <div class="detail-value ${poeOn ? "online" : "offline"}">
-            ${this._escapeHtml(poeOn ? this._t("state_on") : this._t("state_off"))}
+          <div class="detail-value ${poeKnown ? poeOn ? "online" : "offline" : "unknown"}">
+            ${this._escapeHtml(poeKnown ? poeOn ? this._t("state_on") : this._t("state_off") : this._t("poe_capable"))}
           </div>
         </div>
         <div class="detail-item">
@@ -11907,10 +12243,11 @@ var UnifiDeviceCard = class extends HTMLElement {
         ${selected.poe_switch_entity ? `<button class="action-btn primary${poeOn ? "" : " dimmed"}" data-action="toggle-poe" data-entity="${this._escapeAttr(selected.poe_switch_entity)}">
           \u26A1 ${this._escapeHtml(this._t("poe"))}
         </button>` : ""}
-        ${selected.power_cycle_entity ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(selected.power_cycle_entity)}">
-          \u21BA ${this._escapeHtml(this._t("power_cycle"))}
+        ${hasPowerCycle ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(powerCycleEntity)}" data-port="${this._escapeAttr(selected.port)}" data-port-name="${this._escapeAttr(portTitle)}" data-key="${this._escapeAttr(this._poeCycleKey(selected))}" aria-busy="${powerCycleBusy ? "true" : "false"}" ${powerCycleBusy ? "disabled" : ""}>
+          \u21BA ${this._escapeHtml(this._t(powerCycleBusy ? "power_cycle_in_progress" : "power_cycle"))}
         </button>` : ""}
-      </div>` : ""}`;
+      </div>` : ""}
+      ${this._poeCycleError ? `<div class="port-action-error" role="status">${this._escapeHtml(this._poeCycleError)}</div>` : ""}`;
   }
   _renderIntegratedPortSection(ctx) {
     if (!this._integratedPortsEnabled(ctx) || !ctx?.numberedPorts?.length) return "";
@@ -11947,7 +12284,15 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       this._toggleEntity(target.dataset.entity);
     });
     this.shadowRoot.querySelector("[data-action='toggle-poe']")?.addEventListener("click", (e) => this._toggleEntity(e.currentTarget.dataset.entity));
-    this.shadowRoot.querySelector("[data-action='power-cycle']")?.addEventListener("click", (e) => this._pressButton(e.currentTarget.dataset.entity));
+    this.shadowRoot.querySelector("[data-action='power-cycle']")?.addEventListener("click", (e) => {
+      const target = e.currentTarget;
+      this._powerCyclePort({
+        entityId: target.dataset.entity,
+        port: target.dataset.port,
+        portName: target.dataset.portName,
+        key: target.dataset.key
+      });
+    });
     this.shadowRoot.querySelector("[data-action='reboot-device']")?.addEventListener("click", () => this._pressButton(ctx?.reboot_entity));
   }
   _renderPanelAndDetail() {
@@ -12143,18 +12488,22 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       const linkUp = this._isPortConnected(selected, portClientIndex);
       const linkKnown = this._isPortStatusKnown(selected, portClientIndex);
       const linkText = linkUp ? "connected" : linkKnown ? "no_link" : "port_status_unknown";
-      const speedText = this._getPortSpeedText(selected, portClientIndex);
+      const speedText = linkUp ? this._getPortSpeedText(selected, portClientIndex) : null;
       const vlan = this._getPortVlan(selected, portClientIndex);
       const clientInfo = this._getMergedPortClientInfo(selected, portClientIndex);
       const clientValue = this._formatPortClientValue(clientInfo);
-      const poeStatus = getPoeStatus(this._hass, selected);
-      const hasPoe = !!(selected.poe_switch_entity || selected.poe_power_entity || selected.power_cycle_entity);
-      const poeOn = poeStatus.active;
-      const poePower = selected.poe_power_entity ? formatState(this._hass, selected.poe_power_entity) : "\u2014";
+      const poeInfo = this._portPoeInfo(selected, portClientIndex);
+      const hasPoe = poeInfo.capable === true;
+      const poeOn = poeInfo.enabled === true;
+      const poeKnown = typeof poeInfo.enabled === "boolean";
+      const poePower = poeInfo.power || "\u2014";
       const rxVal = selected.rx_entity ? formatState(this._hass, selected.rx_entity) : null;
       const txVal = selected.tx_entity ? formatState(this._hass, selected.tx_entity) : null;
       const showVlanTile = !!vlan && !this._clientInfoHasVlan(clientInfo);
-      const hasActions = !!(selected.port_switch_entity || selected.poe_switch_entity || selected.power_cycle_entity);
+      const powerCycleEntity = this._isActionEntityAvailable(selected.power_cycle_entity) ? selected.power_cycle_entity : "";
+      const hasPowerCycle = !!powerCycleEntity || poeInfo.backendCycleAvailable;
+      const powerCycleBusy = this._isPoeCycleBusy(selected);
+      const hasActions = !!(selected.port_switch_entity || selected.poe_switch_entity || hasPowerCycle);
       const portTitle = selected.port_label || (selected.kind === "special" ? selected.label : `${this._t("port_label")} ${selected.label}`);
       detail = `
         <div class="detail-title">${this._escapeHtml(portTitle)}</div>
@@ -12182,8 +12531,8 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           ${hasPoe ? `
           <div class="detail-item">
             <div class="detail-label">${this._escapeHtml(this._t("poe"))}</div>
-            <div class="detail-value ${poeOn ? "online" : "offline"}">
-              ${this._escapeHtml(poeOn ? this._t("state_on") : this._t("state_off"))}
+            <div class="detail-value ${poeKnown ? poeOn ? "online" : "offline" : "unknown"}">
+              ${this._escapeHtml(poeKnown ? poeOn ? this._t("state_on") : this._t("state_off") : this._t("poe_capable"))}
             </div>
           </div>
           <div class="detail-item">
@@ -12212,10 +12561,11 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           ${selected.poe_switch_entity ? `<button class="action-btn primary${poeOn ? "" : " dimmed"}" data-action="toggle-poe" data-entity="${this._escapeAttr(selected.poe_switch_entity)}">
             \u26A1 ${this._escapeHtml(this._t("poe"))}
           </button>` : ""}
-          ${selected.power_cycle_entity ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(selected.power_cycle_entity)}">
-            \u21BA ${this._escapeHtml(this._t("power_cycle"))}
+          ${hasPowerCycle ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(powerCycleEntity)}" data-port="${this._escapeAttr(selected.port)}" data-port-name="${this._escapeAttr(portTitle)}" data-key="${this._escapeAttr(this._poeCycleKey(selected))}" aria-busy="${powerCycleBusy ? "true" : "false"}" ${powerCycleBusy ? "disabled" : ""}>
+            \u21BA ${this._escapeHtml(this._t(powerCycleBusy ? "power_cycle_in_progress" : "power_cycle"))}
           </button>` : ""}
-        </div>` : ""}`;
+        </div>` : ""}
+        ${this._poeCycleError ? `<div class="port-action-error" role="status">${this._escapeHtml(this._poeCycleError)}</div>` : ""}`;
     }
     const integratedWirelessClients = ctx?.layout?.supportsIntegratedWifi ? this._buildWirelessClientData() : null;
     const wirelessClientSection = integratedWirelessClients?.hasTotal ? `
@@ -12227,6 +12577,9 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
     const productImageHtml = this._renderProductImage("network");
     const ledState = this._apLedState();
     const { ledEntity, ledEnabled, ledAvailable } = ledState;
+    const etherlightingControlsHtml = this._renderEtherlightingControls();
+    const detailSectionHtml = selected || this._config?.dynamic_port_details !== true ? `<div class="section">${detail}</div>` : "";
+    const hardwareStageTerminal = !etherlightingControlsHtml && !detailSectionHtml && !wirelessClientSection;
     const portStatusPartial = !portStatus.complete && portStatus.known > 0;
     const portStatusNoticeTitle = portStatusPartial ? this._t("port_status_partial") : this._t("port_status_unknown");
     const portStatusNoticeBody = portStatusPartial ? this._t("port_status_partial_detail").replace("{unknown}", String(portStatus.unknown)).replace("{total}", String(portStatus.total)) : this._t("speed_disabled");
@@ -12260,7 +12613,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           </div>
         </div>
 
-        <div class="hardware-stage${productImageHtml ? " has-product-image" : ""}">
+        <div class="hardware-stage${productImageHtml ? " has-product-image" : ""}${hardwareStageTerminal ? " is-terminal" : ""}">
           ${productImageHtml}
           <div class="frontpanel ${frontStyle} theme-${theme}${showPanel ? "" : " no-panel-bg"}${reverseFrontpanel ? " rotate180-enabled" : ""}">
             <div class="panel-label">${this._escapeHtml(this._t("front_panel"))}</div>
@@ -12269,8 +12622,8 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
           </div>
         </div>
 
-        ${this._renderEtherlightingControls()}
-        ${selected || this._config?.dynamic_port_details !== true ? `<div class="section">${detail}</div>` : ""}
+        ${etherlightingControlsHtml}
+        ${detailSectionHtml}
         ${wirelessClientSection}
       </ha-card>`;
     this.shadowRoot.querySelectorAll(".port").forEach((btn) => btn.addEventListener("click", () => this._selectKey(btn.dataset.key)));
@@ -12292,7 +12645,15 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       this._toggleEntity(target.dataset.entity);
     });
     this.shadowRoot.querySelector("[data-action='toggle-poe']")?.addEventListener("click", (e) => this._toggleEntity(e.currentTarget.dataset.entity));
-    this.shadowRoot.querySelector("[data-action='power-cycle']")?.addEventListener("click", (e) => this._pressButton(e.currentTarget.dataset.entity));
+    this.shadowRoot.querySelector("[data-action='power-cycle']")?.addEventListener("click", (e) => {
+      const target = e.currentTarget;
+      this._powerCyclePort({
+        entityId: target.dataset.entity,
+        port: target.dataset.port,
+        portName: target.dataset.portName,
+        key: target.dataset.key
+      });
+    });
     this.shadowRoot.querySelector("[data-action='reboot-device']")?.addEventListener("click", () => this._pressButton(ctx?.reboot_entity));
   }
   _render() {

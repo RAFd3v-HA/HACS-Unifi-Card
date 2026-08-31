@@ -33,5 +33,9 @@ Repository `https://github.com/RAFd3v-HA/HACS-Unifi-Card-Backend` in HACS als
 **Einstellungen → Geräte & Dienste → Integration hinzufügen** einmal
 **UniFi Device Card Backend** hinzufügen.
 
-Das Backend verlangt keine weiteren UniFi-Zugangsdaten und die Karte bleibt
-auch ohne Backend vollständig nutzbar.
+Wähle bei der Einrichtung die vorhandene offizielle UniFi-Integration
+(empfohlen); dafür sind keine weiteren Zugangsdaten oder Controller-Sitzungen
+nötig. Optional steht ein ausdrücklich gewählter direkter Login als Fallback
+bereit. Seine Zugangsdaten bleiben ausschließlich im Backend-Config-Entry von
+Home Assistant und werden nie an die Karte gesendet. Die Karte bleibt auch ohne
+Backend vollständig nutzbar.
