@@ -1,4 +1,4 @@
-/* UniFi Device Card 0.8.4 */
+/* UniFi Device Card 0.0.0-dev.25a7601 */
 
 // src/model-registry.js
 function range(start, end) {
@@ -4026,6 +4026,13 @@ var TRANSLATIONS = {
     power_cycle: "Power Cycle",
     power_cycle_in_progress: "Power cycle running\u2026",
     power_cycle_error: "The PoE power cycle failed.",
+    power_cycle_error_ha_admin: "Power Cycle requires a Home Assistant administrator.",
+    power_cycle_error_unifi_admin: "The configured UniFi account has no administrator permission for Power Cycle.",
+    power_cycle_error_poe_state: "UniFi does not currently report active PoE on this port.",
+    power_cycle_error_uplink: "Power Cycle is blocked for an uplink port.",
+    power_cycle_error_unavailable: "The UniFi backend or this port is currently unavailable.",
+    power_cycle_error_busy: "A Power Cycle is already running on this switch.",
+    power_cycle_error_unconfirmed: "UniFi did not confirm the Power Cycle. It was not repeated automatically.",
     confirm_power_cycle_title: "Restart PoE device?",
     confirm_power_cycle_message: "Power on {port} will be interrupted briefly. Continue?",
     reboot: "Reboot",
@@ -4302,6 +4309,13 @@ var TRANSLATIONS = {
     power_cycle: "Power Cycle",
     power_cycle_in_progress: "Power Cycle l\xE4uft\u2026",
     power_cycle_error: "Der PoE Power Cycle ist fehlgeschlagen.",
+    power_cycle_error_ha_admin: "Power Cycle erfordert einen Home-Assistant-Administrator.",
+    power_cycle_error_unifi_admin: "Das konfigurierte UniFi-Konto besitzt keine Administratorberechtigung f\xFCr Power Cycle.",
+    power_cycle_error_poe_state: "UniFi meldet an diesem Port derzeit kein aktives PoE.",
+    power_cycle_error_uplink: "Power Cycle ist f\xFCr einen Uplink-Port gesperrt.",
+    power_cycle_error_unavailable: "Das UniFi-Backend oder dieser Port ist derzeit nicht verf\xFCgbar.",
+    power_cycle_error_busy: "Auf diesem Switch l\xE4uft bereits ein Power Cycle.",
+    power_cycle_error_unconfirmed: "UniFi hat den Power Cycle nicht best\xE4tigt. Er wurde nicht automatisch wiederholt.",
     confirm_power_cycle_title: "PoE-Ger\xE4t neu starten?",
     confirm_power_cycle_message: "Die Stromversorgung an {port} wird kurz unterbrochen. Fortfahren?",
     reboot: "Neustart",
@@ -7412,7 +7426,7 @@ if (!customElements.get("unifi-device-card-editor")) {
 }
 
 // src/unifi-device-card.js
-var VERSION = "0.8.4";
+var VERSION = "0.0.0-dev.25a7601";
 var DEV_LOG_FLAG = "__UNIFI_DEVICE_CARD_VERSION_LOGGED__";
 var LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3, trace: 4 };
 var CONTEXT_REFRESH_INTERVAL = 31e3;
@@ -8441,11 +8455,12 @@ var UnifiDeviceCard = class extends HTMLElement {
       const watts = Number(backend?.poe_power_w);
       power = Number.isFinite(watts) && watts >= 0 ? `${Number(watts.toFixed(watts >= 10 ? 1 : 2))} W` : null;
     }
+    const backendCycleCandidate = !!backend && backend?.is_uplink !== true && capable === true && enabled === true;
     return {
       capable,
       enabled,
       power,
-      backendCycleAvailable: backend?.power_cycle_available === true
+      backendCycleAvailable: backend?.power_cycle_available === true || backend?.power_cycle_supported === true || backendCycleCandidate
     };
   }
   _poeCycleKey(slot) {
@@ -9260,6 +9275,26 @@ var UnifiDeviceCard = class extends HTMLElement {
     this._log("debug", "press button", entityId);
     await this._hass.callService("button", "press", { entity_id: entityId });
   }
+  _powerCycleFailureMessage(err) {
+    const code = String(
+      err?.code || err?.error?.code || err?.body?.error?.code || ""
+    ).trim().toLowerCase();
+    const key = {
+      not_authorized: "power_cycle_error_ha_admin",
+      unauthorized: "power_cycle_error_ha_admin",
+      unifi_admin_required: "power_cycle_error_unifi_admin",
+      poe_unsupported: "power_cycle_error_poe_state",
+      poe_disabled: "power_cycle_error_poe_state",
+      uplink_protected: "power_cycle_error_uplink",
+      device_unavailable: "power_cycle_error_unavailable",
+      device_not_found: "power_cycle_error_unavailable",
+      port_not_found: "power_cycle_error_unavailable",
+      unsupported_runtime: "power_cycle_error_unavailable",
+      power_cycle_busy: "power_cycle_error_busy",
+      power_cycle_unconfirmed: "power_cycle_error_unconfirmed"
+    }[code] || "power_cycle_error";
+    return this._t(key);
+  }
   async _powerCyclePort({ entityId = "", port = null, portName = "", key = "" } = {}) {
     if (!this._hass || this._poeCycleUpdatingKey) return;
     const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
@@ -9290,7 +9325,7 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
       }
     } catch (err) {
       if (requestToken !== this._poeCycleRequestToken) return;
-      this._poeCycleError = this._t("power_cycle_error");
+      this._poeCycleError = this._powerCycleFailureMessage(err);
       this._log("warn", `Failed to power cycle ${label}`, err);
     } finally {
       if (requestToken === this._poeCycleRequestToken && deviceId === (this._config?.device_id || "")) {

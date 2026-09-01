@@ -3,7 +3,7 @@
 ## [v0.8.4]
 
 ### 🐛 Bug Fixes
-- Restore Port 16 client/link evidence on managed UniFi uplinks, recognize model- and controller-confirmed PoE capability independently of link state, hide stale negotiated speed while a port is down, and fall back to the guarded backend power-cycle action when the Home Assistant button entity is missing or unavailable.
+- Restore Port 16 client/link evidence on managed UniFi uplinks, recognize model- and controller-confirmed PoE capability independently of link state, hide stale negotiated speed while a port is down, and keep the guarded backend Power Cycle visible for active PoE ports when the Home Assistant button entity is missing, unavailable, or cannot be pre-authorized; controller and permission failures now remain server-validated and produce a specific card message.
 - Register the asynchronous Etherlighting WebSocket command with Home Assistant's async response wrapper, require both a Home Assistant administrator and a confirmed UniFi administrator, serialize writes per device, and verify changed settings with a controller read-back before reporting success.
 - Make device LED controls resilient to unavailable entities, rejected service calls, rapid double clicks, and device changes by using explicit on/off commands, a disabled busy state, and visible error feedback.
 - Fix the optional companion backend failing to load because its local `websocket_api.py` shadowed Home Assistant's WebSocket API module; suppress the partial-port notice while an online switch is still reporting usable ports.
