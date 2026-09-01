@@ -16,12 +16,13 @@
 - Keep the USW Ultra, Ultra 60W, and Ultra 210W front panels identical by placing their shared RJ45 uplink beside ports 1–7; the variants differ by power adapter/PoE budget, not port arrangement.
 
 ### ✨ Improvements
-- Replace the inherited README with a self-contained German feature, installation, configuration, security, and troubleshooting guide without external repository references or embedded third-party screenshots.
+- Replace the inherited README with a self-contained German feature, installation, configuration, security, and troubleshooting guide without external repository references or embedded third-party screenshots, and exclude the obsolete legacy screenshot folder from the GitHub/HACS upload package until current project-owned captures are available.
 - Add a Home Assistant setup/reconfigure UI for the companion backend with the existing official UniFi runtime as the recommended source, an explicit backend-only direct-login fallback, site validation, source status, privacy-safe diagnostics, and strict source isolation without silent fallback.
 - Show companion-backend and configured-source health in the visual card editor and link directly to the backend setup without creating or changing Lovelace cards.
 - Include managed UniFi child devices and conservative single-MAC edge-port observations in live client mapping, allowing clients without their own Home Assistant entity to appear when UniFi provides unambiguous topology evidence.
 - Add native LED toggles for switches and access points and guarded Etherlighting controls for compatible switches through the optional backend; unsupported devices keep the entity-only fallback.
 - Reduce the height of landscape product-image frames, remove the external Ubiquiti link from the image stage, and keep the lower detail spacing aligned with the card's side padding.
+- Give connected-client information the full port-detail width and align PoE status, PoE power, and Power Cycle in one compact row with a narrow-card fallback.
 - Avoid repeating the client VLAN in a separate port-detail tile when the connected-client line already includes it.
 - Add optional companion-backend support that reuses Home Assistant's existing UniFi runtime to map wired clients to switch ports, expose client VLAN/IP/rate and authoritative port link/speed data, enrich WLAN band assignments, and supply mesh RSSI without storing another set of controller credentials; the previous entity-only behavior remains the automatic fallback.
 - Join the official product image and live front-panel ports into one inset hardware stage with shared borders, radii, lighting, and a softer visual transition.

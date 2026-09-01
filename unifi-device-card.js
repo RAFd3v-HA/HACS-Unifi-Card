@@ -10626,6 +10626,7 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
       .integrated-port-detail {
         display: grid;
         align-content: center;
+        container-type: inline-size;
       }
 
       .ap-layout.has-integrated-ports {
@@ -11709,6 +11710,38 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
         box-shadow: inset 0 1px 0 color-mix(in srgb, var(--primary-text-color, #fff) 6%, transparent);
       }
 
+      .detail-item.client-detail {
+        grid-column: 1 / -1;
+      }
+
+      .poe-detail-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-column: 1 / -1;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .poe-detail-row.has-cycle {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .poe-detail-row.action-only {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .poe-cycle-btn {
+        display: inline-flex;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 56px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 11px;
+        text-align: center;
+      }
+
       .detail-label {
         font-size: 0.67rem;
         font-weight: 600;
@@ -12170,6 +12203,12 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
           grid-template-columns: minmax(0, 1fr);
         }
 
+        .poe-detail-row,
+        .poe-detail-row.has-cycle,
+        .poe-detail-row.action-only {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
         .actions .action-btn {
           flex: 1 1 100%;
         }
@@ -12184,6 +12223,14 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
 
         .port-telemetry-notice button {
           grid-column: 1 / -1;
+        }
+      }
+
+      @container (max-width: 300px) {
+        .integrated-port-detail .poe-detail-row,
+        .integrated-port-detail .poe-detail-row.has-cycle,
+        .integrated-port-detail .poe-detail-row.action-only {
+          grid-template-columns: minmax(0, 1fr);
         }
       }
 
@@ -12220,11 +12267,11 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
     const powerCycleEntity = this._isActionEntityAvailable(selected.power_cycle_entity) ? selected.power_cycle_entity : "";
     const hasPowerCycle = !!powerCycleEntity || poeInfo.backendCycleAvailable;
     const powerCycleBusy = this._isPoeCycleBusy(selected);
-    const hasActions = !!(selected.port_switch_entity || selected.poe_switch_entity || hasPowerCycle);
+    const hasFooterActions = !!(selected.port_switch_entity || selected.poe_switch_entity);
     const portTitle = selected.port_label || (selected.kind === "special" ? selected.label : `${this._t("port_label")} ${selected.label}`);
     return `
       <div class="detail-title">${this._escapeHtml(portTitle)}</div>
-      <div class="detail-grid${hasActions ? "" : " no-actions"}">
+      <div class="detail-grid${hasFooterActions ? "" : " no-actions"}">
         <div class="detail-item">
           <div class="detail-label">${this._escapeHtml(this._t("link_status"))}</div>
           <div class="detail-value ${linkUp ? "online" : linkKnown ? "offline" : "unknown"}">
@@ -12241,20 +12288,26 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
           <div class="detail-value">${this._escapeHtml(vlan.value)}</div>
         </div>` : ""}
         ${clientValue ? `
-        <div class="detail-item">
+        <div class="detail-item client-detail">
           <div class="detail-label">${this._escapeHtml(this._t("clients"))}</div>
           <div class="detail-value">${this._escapeHtml(clientValue)}</div>
         </div>` : ""}
-        ${hasPoe ? `
-        <div class="detail-item">
-          <div class="detail-label">${this._escapeHtml(this._t("poe"))}</div>
-          <div class="detail-value ${poeKnown ? poeOn ? "online" : "offline" : "unknown"}">
-            ${this._escapeHtml(poeKnown ? poeOn ? this._t("state_on") : this._t("state_off") : this._t("poe_capable"))}
+        ${hasPoe || hasPowerCycle ? `
+        <div class="poe-detail-row${hasPowerCycle ? " has-cycle" : ""}${!hasPoe ? " action-only" : ""}">
+          ${hasPoe ? `
+          <div class="detail-item">
+            <div class="detail-label">${this._escapeHtml(this._t("poe"))}</div>
+            <div class="detail-value ${poeKnown ? poeOn ? "online" : "offline" : "unknown"}">
+              ${this._escapeHtml(poeKnown ? poeOn ? this._t("state_on") : this._t("state_off") : this._t("poe_capable"))}
+            </div>
           </div>
-        </div>
-        <div class="detail-item">
-          <div class="detail-label">${this._escapeHtml(this._t("poe_power"))}</div>
-          <div class="detail-value">${this._escapeHtml(poePower || "\u2014")}</div>
+          <div class="detail-item">
+            <div class="detail-label">${this._escapeHtml(this._t("poe_power"))}</div>
+            <div class="detail-value">${this._escapeHtml(poePower || "\u2014")}</div>
+          </div>` : ""}
+          ${hasPowerCycle ? `<button class="action-btn secondary poe-cycle-btn" data-action="power-cycle" data-entity="${this._escapeAttr(powerCycleEntity)}" data-port="${this._escapeAttr(selected.port)}" data-port-name="${this._escapeAttr(portTitle)}" data-key="${this._escapeAttr(this._poeCycleKey(selected))}" aria-busy="${powerCycleBusy ? "true" : "false"}" ${powerCycleBusy ? "disabled" : ""}>
+            \u21BA ${this._escapeHtml(this._t(powerCycleBusy ? "power_cycle_in_progress" : "power_cycle"))}
+          </button>` : ""}
         </div>` : ""}
         ${rxVal != null ? `
         <div class="detail-item">
@@ -12267,7 +12320,7 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
           <div class="detail-value">${this._escapeHtml(txVal)}</div>
         </div>` : ""}
       </div>
-      ${hasActions ? `<div class="actions">
+      ${hasFooterActions ? `<div class="actions">
         ${selected.port_switch_entity ? (() => {
       const enabled = isOn(this._hass, selected.port_switch_entity);
       const confirmDisableAttr = enabled ? ` data-confirm-disable="true" data-port-name="${this._escapeAttr(portTitle)}"` : "";
@@ -12277,9 +12330,6 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
     })() : ""}
         ${selected.poe_switch_entity ? `<button class="action-btn primary${poeOn ? "" : " dimmed"}" data-action="toggle-poe" data-entity="${this._escapeAttr(selected.poe_switch_entity)}">
           \u26A1 ${this._escapeHtml(this._t("poe"))}
-        </button>` : ""}
-        ${hasPowerCycle ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(powerCycleEntity)}" data-port="${this._escapeAttr(selected.port)}" data-port-name="${this._escapeAttr(portTitle)}" data-key="${this._escapeAttr(this._poeCycleKey(selected))}" aria-busy="${powerCycleBusy ? "true" : "false"}" ${powerCycleBusy ? "disabled" : ""}>
-          \u21BA ${this._escapeHtml(this._t(powerCycleBusy ? "power_cycle_in_progress" : "power_cycle"))}
         </button>` : ""}
       </div>` : ""}
       ${this._poeCycleError ? `<div class="port-action-error" role="status">${this._escapeHtml(this._poeCycleError)}</div>` : ""}`;
@@ -12538,11 +12588,11 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       const powerCycleEntity = this._isActionEntityAvailable(selected.power_cycle_entity) ? selected.power_cycle_entity : "";
       const hasPowerCycle = !!powerCycleEntity || poeInfo.backendCycleAvailable;
       const powerCycleBusy = this._isPoeCycleBusy(selected);
-      const hasActions = !!(selected.port_switch_entity || selected.poe_switch_entity || hasPowerCycle);
+      const hasFooterActions = !!(selected.port_switch_entity || selected.poe_switch_entity);
       const portTitle = selected.port_label || (selected.kind === "special" ? selected.label : `${this._t("port_label")} ${selected.label}`);
       detail = `
         <div class="detail-title">${this._escapeHtml(portTitle)}</div>
-        <div class="detail-grid${hasActions ? "" : " no-actions"}">
+        <div class="detail-grid${hasFooterActions ? "" : " no-actions"}">
           <div class="detail-item">
             <div class="detail-label">${this._escapeHtml(this._t("link_status"))}</div>
             <div class="detail-value ${linkUp ? "online" : linkKnown ? "offline" : "unknown"}">
@@ -12559,20 +12609,26 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
             <div class="detail-value">${this._escapeHtml(vlan.value)}</div>
           </div>` : ""}
           ${clientValue ? `
-          <div class="detail-item">
+          <div class="detail-item client-detail">
             <div class="detail-label">${this._escapeHtml(this._t("clients"))}</div>
             <div class="detail-value">${this._escapeHtml(clientValue)}</div>
           </div>` : ""}
-          ${hasPoe ? `
-          <div class="detail-item">
-            <div class="detail-label">${this._escapeHtml(this._t("poe"))}</div>
-            <div class="detail-value ${poeKnown ? poeOn ? "online" : "offline" : "unknown"}">
-              ${this._escapeHtml(poeKnown ? poeOn ? this._t("state_on") : this._t("state_off") : this._t("poe_capable"))}
+          ${hasPoe || hasPowerCycle ? `
+          <div class="poe-detail-row${hasPowerCycle ? " has-cycle" : ""}${!hasPoe ? " action-only" : ""}">
+            ${hasPoe ? `
+            <div class="detail-item">
+              <div class="detail-label">${this._escapeHtml(this._t("poe"))}</div>
+              <div class="detail-value ${poeKnown ? poeOn ? "online" : "offline" : "unknown"}">
+                ${this._escapeHtml(poeKnown ? poeOn ? this._t("state_on") : this._t("state_off") : this._t("poe_capable"))}
+              </div>
             </div>
-          </div>
-          <div class="detail-item">
-            <div class="detail-label">${this._escapeHtml(this._t("poe_power"))}</div>
-            <div class="detail-value">${this._escapeHtml(poePower || "\u2014")}</div>
+            <div class="detail-item">
+              <div class="detail-label">${this._escapeHtml(this._t("poe_power"))}</div>
+              <div class="detail-value">${this._escapeHtml(poePower || "\u2014")}</div>
+            </div>` : ""}
+            ${hasPowerCycle ? `<button class="action-btn secondary poe-cycle-btn" data-action="power-cycle" data-entity="${this._escapeAttr(powerCycleEntity)}" data-port="${this._escapeAttr(selected.port)}" data-port-name="${this._escapeAttr(portTitle)}" data-key="${this._escapeAttr(this._poeCycleKey(selected))}" aria-busy="${powerCycleBusy ? "true" : "false"}" ${powerCycleBusy ? "disabled" : ""}>
+              \u21BA ${this._escapeHtml(this._t(powerCycleBusy ? "power_cycle_in_progress" : "power_cycle"))}
+            </button>` : ""}
           </div>` : ""}
           ${rxVal != null ? `
           <div class="detail-item">
@@ -12585,7 +12641,7 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
             <div class="detail-value">${this._escapeHtml(txVal)}</div>
           </div>` : ""}
         </div>
-        ${hasActions ? `<div class="actions">
+        ${hasFooterActions ? `<div class="actions">
           ${selected.port_switch_entity ? (() => {
         const enabled = isOn(this._hass, selected.port_switch_entity);
         const confirmDisableAttr = enabled ? ` data-confirm-disable="true" data-port-name="${this._escapeAttr(portTitle)}"` : "";
@@ -12595,9 +12651,6 @@ ${this._t("confirm_disable_port_message").replace("{port}", portName)}`;
       })() : ""}
           ${selected.poe_switch_entity ? `<button class="action-btn primary${poeOn ? "" : " dimmed"}" data-action="toggle-poe" data-entity="${this._escapeAttr(selected.poe_switch_entity)}">
             \u26A1 ${this._escapeHtml(this._t("poe"))}
-          </button>` : ""}
-          ${hasPowerCycle ? `<button class="action-btn secondary" data-action="power-cycle" data-entity="${this._escapeAttr(powerCycleEntity)}" data-port="${this._escapeAttr(selected.port)}" data-port-name="${this._escapeAttr(portTitle)}" data-key="${this._escapeAttr(this._poeCycleKey(selected))}" aria-busy="${powerCycleBusy ? "true" : "false"}" ${powerCycleBusy ? "disabled" : ""}>
-            \u21BA ${this._escapeHtml(this._t(powerCycleBusy ? "power_cycle_in_progress" : "power_cycle"))}
           </button>` : ""}
         </div>` : ""}
         ${this._poeCycleError ? `<div class="port-action-error" role="status">${this._escapeHtml(this._poeCycleError)}</div>` : ""}`;

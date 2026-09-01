@@ -95,6 +95,11 @@ Ein Klick auf den Port öffnet die Detailansicht mit:
 - PoE ein- oder ausschalten
 - PoE-Port neu starten beziehungsweise Power Cycle
 
+Die Clientinformation nutzt dabei die gesamte Breite der Detailansicht.
+PoE-Zustand, PoE-Leistung und Power Cycle stehen auf ausreichend breiten Karten
+gemeinsam in einer Zeile und werden auf sehr schmalen Karten automatisch
+untereinander angeordnet.
+
 Das Abschalten eines aktiven Ports erfordert eine Bestätigung. Bei
 `dynamic_port_details: true` startet die Karte ohne Detailbereich; ein erneuter
 Klick auf den ausgewählten Port blendet ihn wieder aus.
