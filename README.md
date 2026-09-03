@@ -217,15 +217,19 @@ Exakte Produktansichten sind derzeit für folgende Modellgruppen hinterlegt:
 Kompatible Switches können über das optionale Backend zusätzliche
 Etherlighting-Einstellungen anzeigen:
 
-- LED-/Etherlighting-Modus
+- aktueller Etherlighting-Betriebsmodus
 - Zuordnung nach Geschwindigkeit oder Netzwerk
 - Verhalten wie dauerhaft oder atmend
 - Helligkeit
 
 Die Steuerelemente erscheinen nur, wenn der Controller die native Fähigkeit
 für das konkrete Gerät meldet. Änderungen werden pro Gerät serialisiert und
-anschließend durch erneutes Lesen bestätigt. Nicht unterstützte Geräte behalten
-die normale Kartenansicht ohne leere Bedienelemente.
+anschließend durch erneutes Lesen bestätigt. Meldet ein Switch Etherlighting-
+Hardware, liefert aber keine kompatible Konfiguration, zeigt die Karte an dieser
+Stelle einen kompakten Diagnosehinweis statt die Funktion still auszublenden.
+Der aktuelle Schreibpfad ist für UniFi Network 10 ab Version 10.5.62 validiert;
+bei einer anderen oder nicht ermittelbaren Version bleibt die Anzeige bewusst
+schreibgeschützt.
 
 ### Visueller Karteneditor
 
@@ -291,7 +295,14 @@ Bei der Einrichtung stehen zwei Quellen zur Wahl:
 
    Das Backend validiert Host, Port, Benutzer, Passwort und Standort. Diese
    Daten bleiben ausschließlich im Home-Assistant-Config-Entry. Die eigene
-   Sitzung existiert nur, solange dieser Modus ausgewählt ist.
+   Sitzung existiert nur, solange dieser Modus ausgewählt ist. Fordert das
+   Konto MFA an, öffnet die Einrichtung automatisch einen eigenen Schritt für
+   den Base32-TOTP-Einrichtungsschlüssel. Gemeint ist das bei der
+   Authenticator-Einrichtung angezeigte Geheimnis, nicht der aktuelle
+   sechsstellige Code. Der Schlüssel wird für automatische Neuanmeldungen nach
+   einem Neustart benötigt. Reine Ubiquiti-Verify-/Push-Freigaben werden von
+   dieser direkten Sitzung nicht unterstützt; verwende dann die offizielle
+   UniFi-Integration oder ein separates lokales UniFi-Konto.
 
 Die gewählte Quelle ist strikt: Ein explizit gewählter direkter Login fällt
 nicht still auf eine andere Controller-Sitzung zurück. Vorhandene ältere
@@ -312,8 +323,8 @@ Das Backend liefert:
 - kontrollierten PoE-Power-Cycle
 
 Datenschutzfreundliche Diagnosen enthalten nur Status, Fähigkeiten und
-Objektanzahlen. Zugangsdaten, Host, Clientnamen, IP-Adressen und MAC-Adressen
-werden nicht ausgegeben.
+Objektanzahlen. Zugangsdaten einschließlich Passwort und TOTP-Schlüssel, Host,
+Clientnamen, IP-Adressen und MAC-Adressen werden nicht ausgegeben.
 
 ## Voraussetzungen
 
@@ -369,7 +380,9 @@ Danach:
 3. **UniFi Device Card Backend** auswählen.
 4. Empfohlen: vorhandene offizielle UniFi-Integration als Quelle wählen.
 5. Optional: direkten Login nur dann wählen, wenn die offizielle Quelle die
-   benötigten Daten nicht bereitstellt.
+   benötigten Daten nicht bereitstellt. Wenn der Controller MFA verlangt,
+   erscheint danach automatisch die maskierte Abfrage des
+   TOTP-Einrichtungsschlüssels.
 
 Über **Konfigurieren** werden Status und Diagnoseeinstellung angezeigt. Über
 **Neu konfigurieren** kann die Quelle gewechselt oder ein direkter Login
@@ -648,12 +661,14 @@ Frontpanel sinnvolle Breite an. AP-Karten bleiben kompakter. Eigene
 - Der Browser verbindet sich nie direkt mit dem UniFi-Controller
 - Backend-Kommunikation läuft über authentifizierte Home-Assistant-WebSockets
 - Der empfohlene Backend-Modus nutzt die bestehende Home-Assistant-Sitzung
-- Direkte Zugangsdaten bleiben ausschließlich im Backend-Config-Entry
+- Direkte Zugangsdaten einschließlich TOTP-Einrichtungsschlüssel bleiben
+  ausschließlich im Backend-Config-Entry
 - Topologieabfragen sind auf das angefragte Infrastrukturgerät begrenzt
 - PoE-Power-Cycle und Etherlighting verlangen einen Home-Assistant-Administrator
 - Schreibaktionen verlangen zusätzlich ein UniFi-Konto mit Administratorrechten
 - Controllerfehler, interne Payloads und Zugangsdaten werden nicht an den Browser durchgereicht
-- Diagnosen enthalten keine Clientnamen, IP-Adressen, MAC-Adressen oder Passwörter
+- Diagnosen enthalten keine Clientnamen, IP-Adressen, MAC-Adressen, Passwörter
+  oder TOTP-Schlüssel
 - SSH, `ubus` und direkte Dateisystemeingriffe auf UniFi-Geräten werden nicht verwendet
 
 Produktbilder werden nur bei aktivierter Produktansicht geladen. Eine eigene
@@ -705,6 +720,15 @@ Frontend-Ressource neu laden.
 - Bei direktem Login Standort und Berechtigungen prüfen
 - Mehrere MAC-Adressen an einem Port werden nicht automatisch als eindeutiger
   Direktclient geraten
+
+### Direkter Login verlangt MFA
+
+- Im MFA-Schritt den Base32-TOTP-Einrichtungsschlüssel eintragen, nicht den
+  aktuellen sechsstelligen Einmalcode; Leerzeichen im Schlüssel sind erlaubt.
+- Nach einer Änderung des Authenticator-Schlüssels das Backend über **Neu
+  konfigurieren** erneut anmelden.
+- Bei ausschließlich Ubiquiti Verify/Push die empfohlene offizielle
+  UniFi-Integration oder ein separates lokales Konto verwenden.
 
 ### PoE-Power-Cycle fehlt
 

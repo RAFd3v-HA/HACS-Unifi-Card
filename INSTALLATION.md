@@ -37,5 +37,9 @@ Wähle bei der Einrichtung die vorhandene offizielle UniFi-Integration
 (empfohlen); dafür sind keine weiteren Zugangsdaten oder Controller-Sitzungen
 nötig. Optional steht ein ausdrücklich gewählter direkter Login als Fallback
 bereit. Seine Zugangsdaten bleiben ausschließlich im Backend-Config-Entry von
-Home Assistant und werden nie an die Karte gesendet. Die Karte bleibt auch ohne
-Backend vollständig nutzbar.
+Home Assistant und werden nie an die Karte gesendet. Verlangt dieses Konto MFA,
+fragt ein eigener, maskierter Schritt den Base32-TOTP-Einrichtungsschlüssel ab
+– nicht den aktuellen sechsstelligen Code. Er wird für automatische Logins nach
+Neustarts benötigt und nicht in Diagnosen ausgegeben. Bei reiner
+Ubiquiti-Verify-/Push-MFA verwende die offizielle Integration oder ein separates
+lokales UniFi-Konto. Die Karte bleibt auch ohne Backend vollständig nutzbar.

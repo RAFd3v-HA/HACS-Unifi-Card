@@ -4051,6 +4051,15 @@ var TRANSLATIONS = {
     etherlighting_behavior_steady: "Steady",
     etherlighting_behavior_breath: "Breathing",
     etherlighting_brightness: "Brightness",
+    etherlighting_available: "Available",
+    etherlighting_unavailable: "Unavailable",
+    etherlighting_configuration_unavailable: "The switch advertises Etherlighting, but UniFi did not return its current configuration.",
+    etherlighting_inactive_hint: "Etherlighting is not active on this switch. Enable it once in UniFi Network; the controls will then appear here.",
+    etherlighting_incompatible: "The controller returned an Etherlighting format that this version cannot safely control.",
+    etherlighting_admin_required: "Changes require administrator permissions in Home Assistant and UniFi.",
+    etherlighting_controller_unavailable: "The UniFi controller is currently unavailable for changes.",
+    etherlighting_version_unsupported: "This UniFi Network version is not validated for Etherlighting changes.",
+    etherlighting_write_contract_unavailable: "UniFi did not return all fields required for a safe change.",
     etherlighting_error: "Etherlighting could not be updated.",
     // Hints
     speed_disabled: "Speed entity disabled \u2014 enable it in HA to show link speed.",
@@ -4334,6 +4343,15 @@ var TRANSLATIONS = {
     etherlighting_behavior_steady: "Dauerlicht",
     etherlighting_behavior_breath: "Atmen",
     etherlighting_brightness: "Helligkeit",
+    etherlighting_available: "Verf\xFCgbar",
+    etherlighting_unavailable: "Nicht verf\xFCgbar",
+    etherlighting_configuration_unavailable: "Der Switch meldet Etherlighting-Hardware, aber UniFi liefert die aktuelle Konfiguration nicht zur\xFCck.",
+    etherlighting_inactive_hint: "Etherlighting ist an diesem Switch nicht aktiv. Aktiviere es einmal in UniFi Network; danach erscheinen die Regler hier.",
+    etherlighting_incompatible: "Der Controller liefert ein Etherlighting-Format, das diese Version nicht sicher steuern kann.",
+    etherlighting_admin_required: "\xC4nderungen erfordern Administratorrechte in Home Assistant und UniFi.",
+    etherlighting_controller_unavailable: "Der UniFi-Controller ist f\xFCr \xC4nderungen momentan nicht erreichbar.",
+    etherlighting_version_unsupported: "Diese UniFi-Network-Version ist f\xFCr Etherlighting-\xC4nderungen nicht validiert.",
+    etherlighting_write_contract_unavailable: "UniFi liefert nicht alle Felder, die f\xFCr eine sichere \xC4nderung erforderlich sind.",
     etherlighting_error: "Etherlighting konnte nicht aktualisiert werden.",
     // Hints
     speed_disabled: "Speed-Entity deaktiviert \u2014 in HA aktivieren f\xFCr Geschwindigkeitsanzeige.",
@@ -7739,13 +7757,35 @@ var UnifiDeviceCard = class extends HTMLElement {
     return value?.supported === true ? value : null;
   }
   _renderEtherlightingControls() {
+    const status = this._backendData?.etherlighting;
+    if (!status || typeof status !== "object") return "";
+    if (status.supported !== true) {
+      const reasonKey = status.reason === "inactive_or_invalid_led_mode" ? "etherlighting_inactive_hint" : status.reason === "configuration_unavailable" ? "etherlighting_configuration_unavailable" : "etherlighting_incompatible";
+      return `
+        <section class="etherlighting-panel unavailable" aria-label="${this._escapeAttr(this._t("etherlighting"))}">
+          <div class="etherlighting-heading">
+            <div>
+              <div class="section-title">${this._escapeHtml(this._t("etherlighting"))}</div>
+              <div class="muted">${this._escapeHtml(this._t(reasonKey))}</div>
+            </div>
+            <span class="chip compact">${this._escapeHtml(this._t("etherlighting_unavailable"))}</span>
+          </div>
+        </section>`;
+    }
     const data = this._etherlightingData();
     if (!data) return "";
-    const ledMode = data.led_mode === "etherlighting" ? "etherlighting" : "standard";
     const mode = data.mode === "network" ? "network" : "speed";
     const behavior = data.behavior === "breath" ? "breath" : "steady";
     const brightness = data.brightness != null && Number.isFinite(Number(data.brightness)) ? Math.max(1, Math.min(100, Number(data.brightness))) : 100;
     const busy = this._etherlightingUpdating;
+    const writable = data.writable !== false;
+    const disabled = busy || !writable;
+    const legacyToggle = data.reason == null;
+    const writeReasonKey = {
+      controller_unavailable: "etherlighting_controller_unavailable",
+      unsupported_network_version: "etherlighting_version_unsupported",
+      write_contract_unavailable: "etherlighting_write_contract_unavailable"
+    }[data.write_reason] || "etherlighting_admin_required";
     return `
       <section class="etherlighting-panel" aria-label="${this._escapeAttr(this._t("etherlighting"))}">
         <div class="etherlighting-heading">
@@ -7753,37 +7793,42 @@ var UnifiDeviceCard = class extends HTMLElement {
             <div class="section-title">${this._escapeHtml(this._t("etherlighting"))}</div>
             <div class="muted">${this._escapeHtml(this._t("etherlighting_hint"))}</div>
           </div>
-          <button type="button" class="chip compact etherlighting-toggle" data-action="toggle-etherlighting" aria-pressed="${ledMode === "etherlighting" ? "true" : "false"}" ${busy ? "disabled" : ""}>
-            <span class="led-indicator" style="--led-indicator: ${ledMode === "etherlighting" ? "#36d278" : "#868b93"}"></span>
-            ${this._escapeHtml(this._t(ledMode === "etherlighting" ? "etherlighting_on" : "etherlighting_off"))}
-          </button>
+          ${legacyToggle ? `
+            <button type="button" class="chip compact etherlighting-toggle" data-action="toggle-etherlighting" aria-pressed="${data.led_mode === "etherlighting" ? "true" : "false"}" ${disabled ? "disabled" : ""}>
+              <span class="led-indicator" style="--led-indicator: ${data.led_mode === "etherlighting" ? "#36d278" : "#89919e"}"></span>
+              ${this._escapeHtml(data.led_mode === "etherlighting" ? this._t("etherlighting_on") : this._t("etherlighting_off"))}
+            </button>` : `
+            <span class="chip compact etherlighting-toggle">
+              <span class="led-indicator" style="--led-indicator: #36d278"></span>
+              ${this._escapeHtml(this._t("etherlighting_available"))}
+            </span>`}
         </div>
         <div class="etherlighting-grid">
           <label class="etherlighting-field">
             <span>${this._escapeHtml(this._t("etherlighting_mode"))}</span>
-            <select data-action="etherlighting-mode" ${busy ? "disabled" : ""}>
+            <select data-action="etherlighting-mode" ${disabled ? "disabled" : ""}>
               <option value="speed" ${mode === "speed" ? "selected" : ""}>${this._escapeHtml(this._t("etherlighting_mode_speed"))}</option>
               <option value="network" ${mode === "network" ? "selected" : ""}>${this._escapeHtml(this._t("etherlighting_mode_network"))}</option>
             </select>
           </label>
           <label class="etherlighting-field">
             <span>${this._escapeHtml(this._t("etherlighting_behavior"))}</span>
-            <select data-action="etherlighting-behavior" ${busy ? "disabled" : ""}>
+            <select data-action="etherlighting-behavior" ${disabled ? "disabled" : ""}>
               <option value="steady" ${behavior === "steady" ? "selected" : ""}>${this._escapeHtml(this._t("etherlighting_behavior_steady"))}</option>
               <option value="breath" ${behavior === "breath" ? "selected" : ""}>${this._escapeHtml(this._t("etherlighting_behavior_breath"))}</option>
             </select>
           </label>
           <label class="etherlighting-field etherlighting-brightness">
             <span>${this._escapeHtml(this._t("etherlighting_brightness"))}<output>${this._escapeHtml(`${brightness}%`)}</output></span>
-            <input data-action="etherlighting-brightness" type="range" min="1" max="100" step="1" value="${this._escapeAttr(brightness)}" ${busy ? "disabled" : ""}>
+            <input data-action="etherlighting-brightness" type="range" min="1" max="100" step="1" value="${this._escapeAttr(brightness)}" ${disabled ? "disabled" : ""}>
           </label>
         </div>
+        ${!writable ? `<div class="etherlighting-error permission" role="note">${this._escapeHtml(this._t(writeReasonKey))}</div>` : ""}
         ${this._etherlightingError ? `<div class="etherlighting-error" role="status">${this._escapeHtml(this._etherlightingError)}</div>` : ""}
       </section>`;
   }
   _attachEtherlightingHandlers() {
-    const toggle = this.shadowRoot.querySelector("[data-action='toggle-etherlighting']");
-    toggle?.addEventListener("click", () => {
+    this.shadowRoot.querySelector("[data-action='toggle-etherlighting']")?.addEventListener("click", () => {
       const current = this._etherlightingData()?.led_mode === "etherlighting";
       this._setEtherlighting({ led_mode: current ? "standard" : "etherlighting" });
     });
@@ -7800,7 +7845,8 @@ var UnifiDeviceCard = class extends HTMLElement {
     });
   }
   async _setEtherlighting(patch) {
-    if (this._etherlightingUpdating || !this._hass?.callWS || !this._etherlightingData()) return;
+    const etherlighting = this._etherlightingData();
+    if (this._etherlightingUpdating || !this._hass?.callWS || !etherlighting || etherlighting.writable === false) return;
     const deviceMac = normalizeMac(this._ctx?.identity?.primary_mac);
     if (!deviceMac) return;
     const focusAction = this.shadowRoot?.activeElement?.dataset?.action || "";
@@ -10124,6 +10170,11 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
         gap: 10px;
       }
 
+      .etherlighting-panel.unavailable {
+        border-color: var(--udc-border);
+        background: var(--udc-chrome-bg, var(--udc-surface));
+      }
+
       .etherlighting-heading {
         display: flex;
         align-items: center;
@@ -10198,6 +10249,10 @@ ${this._t("confirm_power_cycle_message").replace("{port}", label)}`;
       .etherlighting-error {
         color: var(--error-color, #db4437);
         font-size: .7rem;
+      }
+
+      .etherlighting-error.permission {
+        color: var(--udc-muted);
       }
 
       @keyframes blink {
